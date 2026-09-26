@@ -6,9 +6,13 @@ Open-source CLI (in development) that tests whether AI shopping agents can find,
 
 Profile URL to send in `meta.ucp-agent.profile`:
 
-    https://cdn.jsdelivr.net/gh/tuhinmitra888/storeprobe@main/public/ucp/agent-profile.json
+    https://storeprobe.ai/ucp/agent-profile.json
 
-Use the jsDelivr URL, not GitHub Pages: UCP requires the profile to be served with `Cache-Control: public, max-age>=60`, and GitHub Pages sends `max-age=600` without `public`, which Shopify rejects as `profile_malformed`.
+It is served by a static-assets Cloudflare Worker (`wrangler.jsonc`, site files in `public/`). `public/_headers` sets `Cache-Control: public, max-age=3600`, because UCP requires `public` and `max-age>=60`; GitHub Pages can't set that header and Shopify rejects it as `profile_malformed`.
+
+Fallback URL (same file via jsDelivr, caches `@main` for up to 7 days):
+
+    https://cdn.jsdelivr.net/gh/tuhinmitra888/storeprobe@main/public/ucp/agent-profile.json
 
 ## License
 

@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import handcheck as h
 
 CATALOG = "https://catalog.shopify.com/api/ucp/mcp"
-PROFILE = "https://cdn.jsdelivr.net/gh/tuhinmitra888/storeprobe@main/public/ucp/agent-profile.json"
+PROFILE = "https://storeprobe.ai/ucp/agent-profile.json"
 
 STORES = [  # domain, brand, country, currency
     ("www.allbirds.com", "Allbirds", "US", "USD"),
