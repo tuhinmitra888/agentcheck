@@ -1,7 +1,7 @@
 """Does each store show up in Shopify Catalog, and do catalog details match the store's own data?
 
 Usage: python3 catalogcheck.py [<domain> ...]   (no arguments: all stores in STORES)
-Makes anonymous-tier search_catalog calls with agentcheck's agent profile, about 4 per store.
+Makes anonymous-tier search_catalog calls with storeprobe's agent profile, about 4 per store.
 """
 import json, re, sys, time, urllib.request, urllib.error, html as htmllib
 from urllib.parse import urlparse
@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import handcheck as h
 
 CATALOG = "https://catalog.shopify.com/api/ucp/mcp"
-PROFILE = "https://cdn.jsdelivr.net/gh/tuhinmitra888/agentcheck@main/ucp/agent-profile.json"
+PROFILE = "https://cdn.jsdelivr.net/gh/tuhinmitra888/storeprobe@main/ucp/agent-profile.json"
 
 STORES = [  # domain, brand, country, currency
     ("www.allbirds.com", "Allbirds", "US", "USD"),
@@ -36,7 +36,7 @@ def search(query, country, currency):
         "meta": {"ucp-agent": {"profile": PROFILE}},
         "catalog": {"query": query, "context": {"address_country": country, "currency": currency}}}}}
     req = urllib.request.Request(CATALOG, method="POST", data=json.dumps(body).encode(), headers={
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "agentcheck/0.0 (+https://github.com/tuhinmitra888/agentcheck)"})
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "storeprobe/0.0 (+https://github.com/tuhinmitra888/storeprobe)"})
     try:
         with urllib.request.urlopen(req, timeout=40) as r:
             d = json.loads(r.read())
