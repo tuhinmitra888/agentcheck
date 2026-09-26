@@ -1,0 +1,8 @@
+{
+  // Static-assets-only Worker: serves public/ (agent profile + _headers). No script.
+  "name": "storeprobe",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./public"
+  }
+}
