@@ -36,7 +36,7 @@ def search(query, country, currency):
         "meta": {"ucp-agent": {"profile": PROFILE}},
         "catalog": {"query": query, "context": {"address_country": country, "currency": currency}}}}}
     req = urllib.request.Request(CATALOG, method="POST", data=json.dumps(body).encode(), headers={
-        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "storeprobe/0.0 (+https://github.com/tuhinmitra888/storeprobe)"})
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "storeprobe/0.0 (+https://storeprobe.ai)"})
     try:
         with urllib.request.urlopen(req, timeout=40) as r:
             d = json.loads(r.read())

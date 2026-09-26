@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>storeprobe</title>
+  <meta name="description" content="storeprobe tests whether AI shopping agents can find, understand and check out from your store, and shows the evidence.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23166534'/%3E%3Ccircle cx='14' cy='14' r='6.5' fill='none' stroke='white' stroke-width='3'/%3E%3Cpath d='M19 19l6 6' stroke='white' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
+  <style>
+    :root {
+      --bg: #fbfaf7; --text: #1c1c1a; --muted: #5f5e5a; --line: #e4e1da;
+      --accent: #166534; --card: #ffffff; --code: #f1efe9;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root { --bg: #151614; --text: #ecebe6; --muted: #a3a29c; --line: #2d2f2b;
+              --accent: #4ade80; --card: #1c1d1b; --code: #232522; }
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 17px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 680px; margin: 0 auto; padding: 56px 16px 72px; }
+    .brand { font-weight: 700; letter-spacing: -0.01em; color: var(--accent); }
+    h1 { font-size: clamp(28px, 6vw, 40px); line-height: 1.15; letter-spacing: -0.02em; margin: 12px 0 16px; }
+    h2 { font-size: 19px; margin: 40px 0 8px; }
+    p { margin: 0 0 12px; }
+    .lead { font-size: 19px; color: var(--muted); }
+    .status { display: inline-block; font-size: 14px; padding: 3px 10px; border: 1px solid var(--line);
+              border-radius: 999px; color: var(--muted); }
+    ul { padding-left: 20px; margin: 0 0 12px; }
+    li { margin-bottom: 6px; }
+    code { font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--code);
+           padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+    a { color: var(--accent); }
+    footer { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 14px; color: var(--muted); }
+  </style>
+</head>
+<body>
+<main>
+  <div class="brand">storeprobe</div>
+  <h1>Can AI shopping agents buy from your store?</h1>
+  <p class="lead">storeprobe tests whether AI shopping agents can find your products, understand them, and reach checkout, and shows you the evidence and the fixes that matter most.</p>
+  <p><span class="status">In development · open source (Apache-2.0)</span></p>
+
+  <h2>What it checks</h2>
+  <ul>
+    <li><strong>Discovery:</strong> whether your products show up in the catalogs agents search, with the right price and details.</li>
+    <li><strong>Product data:</strong> structured data, identifiers such as GTINs, and whether key facts are readable without JavaScript.</li>
+    <li><strong>Protocols:</strong> whether agents can find your store's commerce endpoints (UCP, MCP, llms.txt).</li>
+    <li><strong>Checkout:</strong> whether an agent can get the right item into a cart and reach checkout. storeprobe never completes a purchase.</li>
+  </ul>
+  <p>Shopify stores first; other platforms later.</p>
+
+  <h2>For store operators</h2>
+  <div class="card">
+    <p>If you see requests from <code>storeprobe</code>: it makes a small number of read-only requests, the way a crawler or a shopping agent would. It never pays, never completes a checkout, and only runs cart or checkout tests on stores whose owners have opted in.</p>
+    <p style="margin:0">Its UCP agent profile is at <a href="/ucp/agent-profile.json"><code>storeprobe.ai/ucp/agent-profile.json</code></a>.</p>
+  </div>
+
+  <h2>Follow along</h2>
+  <p>Code and progress are on GitHub: <a href="https://github.com/tuhinmitra888/storeprobe">github.com/tuhinmitra888/storeprobe</a>.</p>
+
+  <footer>storeprobe is an independent project and is not affiliated with Shopify or any AI platform.</footer>
+</main>
+</body>
+</html>
