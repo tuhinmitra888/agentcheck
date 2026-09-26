@@ -9,3 +9,7 @@ Profile URL to send in `meta.ucp-agent.profile`:
     https://cdn.jsdelivr.net/gh/tuhinmitra888/agentcheck@main/ucp/agent-profile.json
 
 Use the jsDelivr URL, not GitHub Pages: UCP requires the profile to be served with `Cache-Control: public, max-age>=60`, and GitHub Pages sends `max-age=600` without `public`, which Shopify rejects as `profile_malformed`.
+
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE).
