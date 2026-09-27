@@ -24,7 +24,9 @@ if (!domain) throw new Error("--store <domain> is required");
 const brand = values.brand ?? domain.replace(/^www\./, "").split(".")[0]!;
 const context = { address_country: values.country, currency: values.currency };
 
-const candidates = (await fetchStoreProducts(domain)).filter((p) => isShoppable(p) && inStock(p));
+const TEASER_PAGES = 8; // a sample needs at most the first 2,000 products
+const products = await fetchStoreProducts(domain, { maxPages: TEASER_PAGES, partial: true });
+const candidates = products.filter((p) => isShoppable(p) && inStock(p));
 const n = Math.min(Number(values.sample), candidates.length);
 // Spread the sample across the catalog instead of taking the first N, which are usually the newest products.
 const sample = Array.from({ length: n }, (_, i) => candidates[Math.floor((i * candidates.length) / n)]!);
@@ -45,5 +47,6 @@ try {
 }
 
 console.log(`${brand}: ${missing.length} of ${n} in-stock products checked were not found in Shopify Catalog by their exact title.`);
+if (products.length >= TEASER_PAGES * 250) console.log(`(Sampled from the first ${products.length} products; the store has more.)`);
 console.log("(Shopify Catalog is where ChatGPT, Copilot and Google AI Mode look up Shopify products.)\n");
 for (const m of missing) console.log(`- ${m}`);

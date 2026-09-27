@@ -25,14 +25,21 @@ const PAGE_SIZE = 250; // Shopify's maximum per page
 const MAX_PAGES = 40; // 10,000 products
 
 // Reads every page: a store's full catalog is the answer key, and a truncated one marks correct answers wrong.
-export async function fetchStoreProducts(domain: string): Promise<StoreProduct[]> {
+// `partial` returns what was read when the page limit is hit (Kith has over 10,000 products); fine for sampling,
+// not for an answer key, which must be complete.
+export async function fetchStoreProducts(
+  domain: string,
+  opts: { maxPages?: number; partial?: boolean } = {},
+): Promise<StoreProduct[]> {
+  const maxPages = opts.maxPages ?? MAX_PAGES;
   const all: StoreProduct[] = [];
-  for (let page = 1; page <= MAX_PAGES; page++) {
+  for (let page = 1; page <= maxPages; page++) {
     const batch = await fetchPage(domain, page);
     all.push(...batch);
     if (batch.length < PAGE_SIZE) return all;
   }
-  throw new Error(`${domain} has more than ${PAGE_SIZE * MAX_PAGES} products; raise MAX_PAGES`);
+  if (opts.partial) return all;
+  throw new Error(`${domain} has more than ${PAGE_SIZE * maxPages} products; raise MAX_PAGES`);
 }
 
 async function fetchPage(domain: string, page: number): Promise<StoreProduct[]> {

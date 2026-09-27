@@ -242,7 +242,7 @@ test("checkout task asks for a non-default variant when one is available", async
   assert.equal(makeCheckoutTask("Brand", "shop.com", [p]).variantTitle, "Dawn");
 });
 
-test("rate-limit errors are recognised for retry", async () => {
+test("rate-limit and transient service errors are retried", async () => {
   const mod = await import("../src/catalog.js");
   const Catalog = mod.Catalog as unknown as { prototype: { call: Function; callOnce: Function } };
   let calls = 0;
@@ -251,14 +251,15 @@ test("rate-limit errors are recognised for retry", async () => {
   fake.callOnce = async () => {
     calls++;
     if (calls === 1) throw Object.assign(new Error("Error POSTing to endpoint: Rate limit exceeded"), { code: 429 });
+    if (calls === 2) throw Object.assign(new Error("MCP error -32000: Service error. Please try again later."), { code: -32000 });
     return { products: [] };
   };
   const realSetTimeout = globalThis.setTimeout;
   globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as typeof setTimeout; // skip the backoff wait
   try {
     assert.deepEqual(await Catalog.prototype.call.call(fake, "search_catalog", {}), { products: [] });
-    assert.equal(calls, 2);
-    assert.equal(fake.rateLimitWaits, 1);
+    assert.equal(calls, 3);
+    assert.equal(fake.rateLimitWaits, 2);
   } finally {
     globalThis.setTimeout = realSetTimeout;
   }
@@ -320,6 +321,24 @@ test("a catalog link to a dead product page is labelled data_inconsistent", asyn
     const g = await confirmMissing(missing, [{ handle: "niagara-1-4-zip-meteorite-black", title: "Niagara 1/4 Zip" }], "www.shop.com", catalog, ctx);
     assert.equal(g.label, "data_inconsistent");
     assert.match(g.detail, /returns 404/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test("catalog POSTs don't leave abort listeners on the SDK's shared signal", async () => {
+  const { scopedSignalFetch } = await import("../src/catalog.js");
+  const { getEventListeners } = await import("node:events");
+  const shared = new AbortController();
+  const realFetch = globalThis.fetch;
+  let seenSignal: AbortSignal | undefined;
+  globalThis.fetch = (async (_: unknown, init?: RequestInit) => { seenSignal = init?.signal ?? undefined; return new Response("{}"); }) as typeof fetch;
+  try {
+    for (let i = 0; i < 150; i++) await scopedSignalFetch("https://x/", { method: "POST", signal: shared.signal });
+    assert.equal(getEventListeners(shared.signal, "abort").length, 0);
+    assert.notEqual(seenSignal, shared.signal); // each POST got its own signal
+    await scopedSignalFetch("https://x/", { method: "GET", signal: shared.signal });
+    assert.equal(seenSignal, shared.signal); // GET keeps the shared one, so close() still cancels streams
   } finally {
     globalThis.fetch = realFetch;
   }
