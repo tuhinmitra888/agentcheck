@@ -15,7 +15,7 @@ const loop = (answer: unknown, end: LoopResult["end"] = "submitted"): LoopResult
 
 const product = (handle: string, type: string, price: number, available = true): StoreProduct => ({
   handle, title: handle.replace(/-/g, " "), productType: type, vendor: "Brand", options: [],
-  variants: [{ id: handle.length, title: "Default", price, available }],
+  variants: [{ id: handle.length, title: "Default", price, available, requiresShipping: true }],
 });
 
 const catalogHit = (handle: string, min: number) => ({
@@ -226,7 +226,7 @@ test("checkout task skips products passed in skip (e.g. subscription products)",
   const { makeCheckoutTask } = await import("../src/tasks.js");
   const multi = (handle: string): StoreProduct => ({
     ...product(handle, "Board", 10),
-    variants: [{ id: 1, title: "S", price: 10, available: true }, { id: 2, title: "M", price: 10, available: true }],
+    variants: [{ id: 1, title: "S", price: 10, available: true, requiresShipping: true }, { id: 2, title: "M", price: 10, available: true, requiresShipping: true }],
   });
   const products = [multi("a-wax"), multi("b-board")];
   assert.equal(makeCheckoutTask("Brand", "shop.com", products).handle, "a-wax");
@@ -237,7 +237,7 @@ test("checkout task asks for a non-default variant when one is available", async
   const { makeCheckoutTask } = await import("../src/tasks.js");
   const p: StoreProduct = {
     ...product("board", "Board", 10),
-    variants: [{ id: 1, title: "Ice", price: 10, available: true }, { id: 2, title: "Dawn", price: 10, available: true }],
+    variants: [{ id: 1, title: "Ice", price: 10, available: true, requiresShipping: true }, { id: 2, title: "Dawn", price: 10, available: true, requiresShipping: true }],
   };
   assert.equal(makeCheckoutTask("Brand", "shop.com", [p]).variantTitle, "Dawn");
 });
@@ -295,8 +295,32 @@ test("compare task only picks in-stock products", () => {
   assert.deepEqual(task.products.map((p) => p.handle).sort(), ["b-soap", "c-soap"]);
 });
 
-test("compare task never pairs two products with the same title", () => {
+test("compare task only uses products whose title is unique in the store", () => {
   const same = (h: string) => ({ ...product(h, "Tee", 20), title: "Knowles Henley" });
-  const task = makeCompareTask("Brand", [same("henley-a"), same("henley-b"), product("pullover", "Tee", 30)]);
-  assert.notEqual(task.products[0]!.title, task.products[1]!.title);
+  const task = makeCompareTask("Brand", [same("henley-a"), same("henley-b"), product("pullover", "Tee", 30), product("tank", "Tee", 25)]);
+  assert.deepEqual(task.products.map((p) => p.handle).sort(), ["pullover", "tank"]);
+});
+
+test("products that don't ship (donations, gift cards, digital) aren't used for tasks", async () => {
+  const { isShoppable } = await import("../src/store.js");
+  const donation: StoreProduct = { ...product("plant-10-trees", "Trees", 10), variants: [{ id: 1, title: "d", price: 10, available: true, requiresShipping: false }] };
+  assert.equal(isShoppable(donation), false);
+  assert.equal(isShoppable(product("tee", "Tee", 30)), true);
+});
+
+test("a catalog link to a dead product page is labelled data_inconsistent", async () => {
+  const ctx = { address_country: "US", currency: "USD" };
+  const missing = { pass: false, label: "data_missing" as const, detail: "niagara: no answer" };
+  const catalog = {
+    search: async () => [{ ...catalogHit("niagara-1-4-zip", 98), title: "Niagara 1/4 Zip" }],
+  } as unknown as Parameters<typeof confirmMissing>[3];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => new Response(null, { status: url.endsWith("/products/niagara-1-4-zip") ? 404 : 200 })) as typeof fetch;
+  try {
+    const g = await confirmMissing(missing, [{ handle: "niagara-1-4-zip-meteorite-black", title: "Niagara 1/4 Zip" }], "www.shop.com", catalog, ctx);
+    assert.equal(g.label, "data_inconsistent");
+    assert.match(g.detail, /returns 404/);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 });

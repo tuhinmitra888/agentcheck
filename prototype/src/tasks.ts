@@ -28,6 +28,7 @@ export type FailureLabel =
 
 export interface FindTask {
   kind: "find";
+  brand: string;
   prompt: string;
   acceptableHandles: string[]; // every store product that satisfies the constraints
   targetHandle: string; // the product the constraints were built from
@@ -37,6 +38,7 @@ export interface FindTask {
 
 export interface CompareTask {
   kind: "compare";
+  brand: string;
   prompt: string;
   products: { handle: string; title: string; minPrice: number; inStock: boolean }[];
 }
@@ -65,6 +67,7 @@ export function makeFindTask(brand: string, products: StoreProduct[]): FindTask 
   );
   return {
     kind: "find",
+    brand,
     prompt: `I want to buy something from ${brand}'s "${target.productType}" range that costs no more than ${ceiling} and is in stock. Find one and give me its product page URL on ${brand}'s own store.`,
     acceptableHandles: acceptable.map((p) => p.handle),
     targetHandle: target.handle,
@@ -74,10 +77,14 @@ export function makeFindTask(brand: string, products: StoreProduct[]): FindTask 
 
 export function makeCompareTask(brand: string, products: StoreProduct[]): CompareTask {
   // Two products of the store's most common type, so the comparison is one a shopper would actually make.
-  const byType = new Map<string, StoreProduct[]>();
   // In stock only: Shopify Catalog appears to leave out-of-stock products out, so comparing them tests nothing
   // an owner can fix (Tentree's first compare task picked two out-of-stock products).
-  for (const p of products.filter((p) => isShoppable(p) && inStock(p) && p.productType)) {
+  // Titles unique in the store: Tentree sells four products all titled "Knowles Henley", so "compare the Knowles
+  // Henley" has four right answers and the grader can only accept one.
+  const titleCount = new Map<string, number>();
+  for (const p of products) titleCount.set(p.title, (titleCount.get(p.title) ?? 0) + 1);
+  const byType = new Map<string, StoreProduct[]>();
+  for (const p of products.filter((p) => isShoppable(p) && inStock(p) && p.productType && titleCount.get(p.title) === 1)) {
     byType.set(p.productType, [...(byType.get(p.productType) ?? []), p]);
   }
   const group = [...byType.values()].filter((g) => g.length >= 2).sort((x, y) => y.length - x.length || byHandle(x[0]!, y[0]!))[0];
@@ -89,6 +96,7 @@ export function makeCompareTask(brand: string, products: StoreProduct[]): Compar
   if (!b) throw new Error("no two products with different titles share a product type; cannot build a compare task");
   return {
     kind: "compare",
+    brand,
     prompt: `Compare these two products from ${brand}: "${a.title}" and "${b.title}". For each, tell me its lowest price and whether it is in stock.`,
     products: [a, b].map((p) => ({ handle: p.handle, title: p.title, minPrice: minPrice(p), inStock: inStock(p) })),
   };

@@ -9,6 +9,7 @@ export interface StoreVariant {
   title: string;
   price: number; // major units, store currency
   available: boolean;
+  requiresShipping: boolean; // false for donations, gift cards and digital goods
 }
 
 export interface StoreProduct {
@@ -59,7 +60,7 @@ async function fetchPage(domain: string, page: number): Promise<StoreProduct[]> 
       product_type?: string;
       vendor?: string;
       options?: { name: string; values?: string[] }[];
-      variants: { id: number; title: string; price: string; available?: boolean }[];
+      variants: { id: number; title: string; price: string; available?: boolean; requires_shipping?: boolean }[];
     };
     return {
       handle: p.handle,
@@ -72,6 +73,7 @@ async function fetchPage(domain: string, page: number): Promise<StoreProduct[]> 
         title: v.title,
         price: Number(v.price),
         available: v.available ?? false,
+        requiresShipping: v.requires_shipping ?? true,
       })),
     };
   });
@@ -82,8 +84,9 @@ export const inStock = (p: StoreProduct) => p.variants.some((v) => v.available);
 
 // Physical goods a shopper would ask an agent about; excludes gift cards, memberships, subscriptions and free items.
 const NOT_GOODS = /gift ?card|e-?gift|membership|subscription|donation|sample|warranty|insurance|shipping protection/i;
+// Shipping is the reliable signal: Tentree's "Plant 10 Trees" donations passed the name filter but don't ship.
 export const isShoppable = (p: StoreProduct) =>
-  !NOT_GOODS.test(`${p.title} ${p.productType}`) && minPrice(p) > 0;
+  !NOT_GOODS.test(`${p.title} ${p.productType}`) && minPrice(p) > 0 && p.variants.some((v) => v.requiresShipping);
 
 // Follows redirects by hand so a redirect to the password page can be recognised instead of silently followed.
 async function get(url: string, cookie?: string): Promise<Response> {

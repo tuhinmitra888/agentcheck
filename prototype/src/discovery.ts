@@ -3,6 +3,7 @@
 
 import type Anthropic from "@anthropic-ai/sdk";
 import { runLoop, SUBMIT_TOOL, type LoopResult } from "./agent.js";
+import { config } from "./config.js";
 import type { BuyerContext, Catalog, CatalogProduct } from "./catalog.js";
 import { handleFromUrl, OWNER_FIXABLE, type CompareTask, type FailureLabel, type FindTask } from "./tasks.js";
 
@@ -125,7 +126,10 @@ export async function runFind(task: FindTask, domain: string, catalog: Catalog, 
   });
   const grade = gradeFind(task, domain, loop, seen);
   // Any acceptable product counts: the catalog groups colourways, so searching one colourway can return another.
-  return { loop, grade: await confirmMissing(grade, task.probes, domain, catalog, context, new Set(task.acceptableHandles)) };
+  return {
+    loop,
+    grade: await confirmMissing(grade, task.probes, domain, catalog, context, new Set(task.acceptableHandles), task.brand, [...seen.byHandle.values()]),
+  };
 }
 
 export async function runCompare(task: CompareTask, domain: string, catalog: Catalog, context: BuyerContext) {
@@ -138,7 +142,7 @@ export async function runCompare(task: CompareTask, domain: string, catalog: Cat
   });
   const grade = gradeCompare(task, domain, loop, seen);
   const unanswered = task.products.filter((p) => !seen.byHandle.has(p.handle));
-  return { loop, grade: await confirmMissing(grade, unanswered, domain, catalog, context) };
+  return { loop, grade: await confirmMissing(grade, unanswered, domain, catalog, context, undefined, task.brand, [...seen.byHandle.values()]) };
 }
 
 // "Data missing" means the agent never saw the product. That may be the store's catalog data, or the agent searching
@@ -151,10 +155,20 @@ export async function confirmMissing(
   catalog: Pick<Catalog, "search">,
   context: BuyerContext,
   acceptable?: Set<string>, // find: any acceptable product proves findability; compare: only the product itself
+  brand?: string,
+  // What the catalog showed the agent during the run. Catalog search results vary from minute to minute, so a fresh
+  // search can miss what the agent saw.
+  observed: CatalogProduct[] = [],
 ): Promise<Grade> {
   if (grade.label !== "data_missing") return grade;
   for (const p of products) {
-    const results = await catalog.search(p.title, context);
+    // Search the way agents do, brand first; for Tentree's "Niagara 1/4 Zip" the bare title returned no Tentree
+    // products at all.
+    const results = [
+      ...observed,
+      ...(brand ? await catalog.search(`${brand} ${p.title}`, context) : []),
+      ...(await catalog.search(p.title, context)),
+    ];
     const ok = (h?: string) => !!h && (acceptable ? acceptable.has(h) : h === p.handle);
     const hit = results
       .flatMap((r) => r.variants)
@@ -162,6 +176,21 @@ export async function confirmMissing(
       .find(ok);
     if (hit) {
       return { pass: false, label: "navigation_confusing", detail: `${grade.detail}; harness search found ${hit}, so the agent missed it` };
+    }
+    // The catalog may list the store's product under an old address (for example after a handle rename without a
+    // redirect). Agents that follow that link reach a dead page: an owner-fixable inconsistency, not missing data.
+    // Only links on the store's own site count; resellers often list the same title under their own addresses.
+    const stale = results
+      .filter((r) => r.title.trim().toLowerCase() === p.title.trim().toLowerCase())
+      .flatMap((r) => r.variants)
+      .map((v) => (v.url && sameHost(v.url, domain) ? handleFromUrl(v.url) : undefined))
+      .find((h) => h && h !== p.handle);
+    if (stale && (await pageStatus(domain, stale)) === 404) {
+      return {
+        pass: false,
+        label: "data_inconsistent",
+        detail: `${grade.detail}; catalog links "${p.title}" to /products/${stale}, which returns 404 (live page: /products/${p.handle})`,
+      };
     }
   }
   return { ...grade, detail: `${grade.detail}; confirmed: exact-title search doesn't return it` };
@@ -232,3 +261,8 @@ export function sameHost(url: string, domain: string): boolean {
 }
 
 export { Seen };
+
+async function pageStatus(domain: string, handle: string): Promise<number> {
+  const res = await fetch(`https://${domain}/products/${handle}`, { method: "HEAD", redirect: "follow", headers: { "User-Agent": config.userAgent } });
+  return res.status;
+}
