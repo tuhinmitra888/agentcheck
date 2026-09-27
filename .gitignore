@@ -1,2 +1,4 @@
 __pycache__/
 .wrangler/
+node_modules/
+prototype/results/

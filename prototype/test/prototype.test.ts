@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import type { LoopResult } from "../src/agent.js";
+import { gradeCheckout, isCheckoutUrl, shouldBlock } from "../src/checkout.js";
+import { gradeCompare, gradeFind, sameHost, Seen } from "../src/discovery.js";
+import { evaluate } from "../src/evaluate.js";
+import type { RunRecord } from "../src/run.js";
+import type { StoreProduct } from "../src/store.js";
+import { handleFromUrl, makeCompareTask, makeFindTask } from "../src/tasks.js";
+
+const loop = (answer: unknown, end: LoopResult["end"] = "submitted"): LoopResult => ({
+  end, answer, steps: 3, inputTokens: 0, outputTokens: 0, costUsd: 0.05, ms: 20_000, modelsServed: ["claude-opus-5"], transcript: [],
+});
+
+const product = (handle: string, type: string, price: number, available = true): StoreProduct => ({
+  handle, title: handle.replace(/-/g, " "), productType: type, vendor: "Brand", options: [],
+  variants: [{ id: handle.length, title: "Default", price, available }],
+});
+
+const catalogHit = (handle: string, min: number) => ({
+  id: `gid://${handle}`, title: handle, seller: {}, priceRange: { min, max: min, currency: "USD" }, options: [],
+  variants: [{ title: handle, url: `https://www.shop.com/products/${handle}?variant=1` }],
+});
+
+test("payment guard: checkout pages load, submissions and payment hosts are blocked", () => {
+  assert.equal(shouldBlock("https://www.shop.com/checkouts/cn/abc", "GET"), false);
+  assert.equal(shouldBlock("https://www.shop.com/checkouts/cn/abc/graphql", "POST"), true);
+  assert.equal(shouldBlock("https://checkout.shop.com/submit", "POST"), true);
+  assert.equal(shouldBlock("https://deposit.shopifycs.com/sessions", "GET"), true);
+  assert.equal(shouldBlock("https://www.paypal.com/checkoutnow", "GET"), true);
+  assert.equal(shouldBlock("https://www.shop.com/cart/add.js", "POST"), false); // adding to cart is allowed
+  assert.equal(isCheckoutUrl("https://www.shop.com/checkouts/cn/abc"), true);
+  assert.equal(isCheckoutUrl("https://www.shop.com/cart"), false);
+});
+
+test("handles and hosts are read from storefront URLs", () => {
+  assert.equal(handleFromUrl("https://www.shop.com/products/fox-hunt?variant=1&utm_source=shopify"), "fox-hunt");
+  assert.equal(handleFromUrl("https://www.shop.com/collections/all"), undefined);
+  assert.equal(sameHost("https://shop.com/products/x", "www.shop.com"), true);
+  assert.equal(sameHost("https://other.com/products/x", "www.shop.com"), false);
+});
+
+test("find task accepts every product that meets the constraints", () => {
+  const products = [product("a-soap", "Soap", 10), product("b-soap", "Soap", 12), product("c-soap", "Soap", 30), product("oil", "Oil", 5)];
+  const task = makeFindTask("Brand", products);
+  assert.equal(task.targetHandle, "c-soap"); // middle of the handle-sorted in-stock list
+  assert.deepEqual(task.acceptableHandles.sort(), ["a-soap", "b-soap", "c-soap"]); // oil is cheaper but the wrong type
+});
+
+test("find grading separates catalog gaps from agent mistakes", () => {
+  const task = makeFindTask("Brand", [product("a-soap", "Soap", 10), product("b-soap", "Soap", 12), product("c-soap", "Soap", 30)]);
+  const seen = new Seen("www.shop.com");
+  assert.equal(gradeFind(task, "www.shop.com", loop({ product_url: null }), seen).label, "data_missing");
+  seen.record([catalogHit("a-soap", 10)]);
+  assert.equal(gradeFind(task, "www.shop.com", loop({ product_url: "https://www.shop.com/products/a-soap" }), seen).pass, true);
+  assert.equal(gradeFind(task, "www.shop.com", loop({ product_url: "https://www.shop.com/products/c-soap" }), seen).label, "navigation_confusing");
+  assert.equal(gradeFind(task, "www.shop.com", loop({ product_url: "https://rival.com/products/a-soap" }), seen).label, "recommended_competitor");
+  assert.equal(gradeFind(task, "www.shop.com", loop(undefined, "cap_cost"), seen).label, "cap_exceeded");
+});
+
+test("compare grading blames the store when the catalog showed the wrong price", () => {
+  const task = makeCompareTask("Brand", [product("a-soap", "Soap", 10), product("b-soap", "Soap", 12)]);
+  const seen = new Seen("www.shop.com");
+  seen.record([catalogHit("a-soap", 10), catalogHit("b-soap", 15)]);
+  const answer = (bPrice: number) => loop({
+    products: [
+      { product_url: "https://www.shop.com/products/a-soap", lowest_price: 10, in_stock: true },
+      { product_url: "https://www.shop.com/products/b-soap", lowest_price: bPrice, in_stock: true },
+    ],
+  });
+  assert.equal(gradeCompare(task, "www.shop.com", answer(12), seen).pass, true);
+  assert.equal(gradeCompare(task, "www.shop.com", answer(15), seen).label, "data_inconsistent");
+});
+
+test("checkout grading", () => {
+  const task = { kind: "checkout" as const, prompt: "", handle: "x", variantId: 42, variantTitle: "M", price: 20 };
+  const cart = (variant: number, price = 2000) => ({ items: [{ variant_id: variant, quantity: 1, price }] });
+  assert.equal(gradeCheckout(task, true, cart(42), false).pass, true);
+  assert.equal(gradeCheckout(task, true, cart(42, 2500), false).label, "data_inconsistent");
+  assert.equal(gradeCheckout(task, true, cart(7), false).label, "wrong_variant");
+  assert.equal(gradeCheckout(task, false, cart(42), false).label, "checkout_unreachable");
+  assert.equal(gradeCheckout(task, false, undefined, true).label, "access_blocked");
+});
+
+const rec = (store: string, task: "find" | "compare", batch: number, pass: boolean, label?: string): RunRecord => ({
+  store, task, batch, run: 1, pass, label, detail: "", end: "submitted", steps: 3, costUsd: 0.05, ms: 20_000,
+  model: "claude-opus-5", modelsServed: ["claude-opus-5"], at: "",
+});
+
+const batch = (store: string, task: "find" | "compare", b: number, passes: number, label = "data_missing") =>
+  Array.from({ length: 10 }, (_, i) => rec(store, task, b, i < passes, i < passes ? undefined : label));
+
+test("evaluate: go when pairs are stable, failures are fixable and runs stay under the caps", () => {
+  const records = ["s1", "s2", "s3"].flatMap((s) => [...batch(s, "find", 1, 7), ...batch(s, "find", 2, 5)]);
+  const v = evaluate(records);
+  assert.equal(v.stability.unstablePairs, 0);
+  assert.equal(v.usefulness.storesWithFixableFailure, 3);
+  assert.equal(v.go, true);
+});
+
+test("evaluate: two pairs differing by more than 4/10 is a stability no-go", () => {
+  const records = [
+    ...batch("s1", "find", 1, 9), ...batch("s1", "find", 2, 3),
+    ...batch("s2", "find", 1, 8), ...batch("s2", "find", 2, 2),
+    ...batch("s3", "find", 1, 5), ...batch("s3", "find", 2, 5),
+  ];
+  const v = evaluate(records);
+  assert.equal(v.stability.unstablePairs, 2);
+  assert.equal(v.go, false);
+});
+
+test("evaluate: failures that are only the agent's fault fail usefulness", () => {
+  const records = ["s1", "s2", "s3"].flatMap((s) => [...batch(s, "find", 1, 6, "gave_up"), ...batch(s, "find", 2, 6, "gave_up")]);
+  assert.equal(evaluate(records).usefulness.pass, false);
+});
+
+test("evaluate: one run over the cost cap fails cost", () => {
+  const records = [...batch("s1", "find", 1, 7), ...batch("s1", "find", 2, 7)];
+  records[0] = { ...records[0]!, costUsd: 0.62 };
+  assert.equal(evaluate(records).cost.pass, false);
+});

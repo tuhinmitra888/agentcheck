@@ -1,0 +1,103 @@
+// Build step 4: applies the go/no-go criteria from the spec to the runs logged by run.ts.
+//
+//   npm run evaluate -- results/runs.jsonl
+
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { config } from "./config.js";
+import type { RunRecord } from "./run.js";
+import { OWNER_FIXABLE } from "./tasks.js";
+
+export interface PairResult {
+  store: string;
+  task: string;
+  batch1: { pass: number; runs: number };
+  batch2: { pass: number; runs: number };
+  unstable: boolean;
+}
+
+export interface Verdict {
+  pairs: PairResult[];
+  stability: { pass: boolean; unstablePairs: number };
+  usefulness: { pass: boolean; storesWithFixableFailure: number; stores: number };
+  cost: { pass: boolean; runsOverCost: number; runsOverTime: number; maxCostUsd: number; maxSeconds: number };
+  go: boolean;
+}
+
+// Stability: at most 1 task-store pair may differ by more than 4 out of 10 between batches.
+// Scaled for other batch sizes as "more than 40% of the batch".
+const UNSTABLE_SHARE = 0.4;
+const MAX_UNSTABLE_PAIRS = 1;
+// Usefulness: at least half the stores have an owner-fixable failure.
+const MIN_FIXABLE_SHARE = 0.5;
+
+export function evaluate(records: RunRecord[]): Verdict {
+  const groups = new Map<string, RunRecord[]>();
+  for (const r of records) {
+    const key = `${r.store}\u0000${r.task}`;
+    groups.set(key, [...(groups.get(key) ?? []), r]);
+  }
+
+  const pairs: PairResult[] = [...groups.values()].map((rs) => {
+    const count = (b: number) => {
+      const inBatch = rs.filter((r) => r.batch === b);
+      return { pass: inBatch.filter((r) => r.pass).length, runs: inBatch.length };
+    };
+    const b1 = count(1);
+    const b2 = count(2);
+    const size = Math.max(b1.runs, b2.runs, 1);
+    return {
+      store: rs[0]!.store,
+      task: rs[0]!.task,
+      batch1: b1,
+      batch2: b2,
+      unstable: Math.abs(b1.pass - b2.pass) > UNSTABLE_SHARE * size,
+    };
+  });
+  const unstablePairs = pairs.filter((p) => p.unstable).length;
+
+  const stores = [...new Set(records.map((r) => r.store))];
+  const fixable = new Set<string>(OWNER_FIXABLE);
+  const storesWithFixableFailure = stores.filter((s) =>
+    records.some((r) => r.store === s && !r.pass && r.label && fixable.has(r.label)),
+  ).length;
+
+  const runsOverCost = records.filter((r) => r.costUsd >= config.caps.maxCostUsd || r.end === "cap_cost").length;
+  const runsOverTime = records.filter((r) => r.ms >= config.caps.maxMs || r.end === "cap_time").length;
+
+  const stability = { pass: unstablePairs <= MAX_UNSTABLE_PAIRS, unstablePairs };
+  const usefulness = {
+    pass: stores.length > 0 && storesWithFixableFailure >= Math.ceil(MIN_FIXABLE_SHARE * stores.length),
+    storesWithFixableFailure,
+    stores: stores.length,
+  };
+  const cost = {
+    pass: runsOverCost === 0 && runsOverTime === 0,
+    runsOverCost,
+    runsOverTime,
+    maxCostUsd: Math.max(0, ...records.map((r) => r.costUsd)),
+    maxSeconds: Math.max(0, ...records.map((r) => r.ms / 1000)),
+  };
+  return { pairs, stability, usefulness, cost, go: stability.pass && usefulness.pass && cost.pass };
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  const file = process.argv[2] ?? "results/runs.jsonl";
+  const records = (await readFile(file, "utf8"))
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => JSON.parse(l) as RunRecord);
+  const v = evaluate(records);
+  for (const p of v.pairs) {
+    console.log(
+      `${p.store} ${p.task}: batch 1 ${p.batch1.pass}/${p.batch1.runs}, batch 2 ${p.batch2.pass}/${p.batch2.runs}${p.unstable ? "  UNSTABLE" : ""}`,
+    );
+  }
+  console.log(`\nStability:  ${v.stability.pass ? "pass" : "FAIL"} (${v.stability.unstablePairs} unstable pairs, max ${MAX_UNSTABLE_PAIRS})`);
+  console.log(`Usefulness: ${v.usefulness.pass ? "pass" : "FAIL"} (${v.usefulness.storesWithFixableFailure}/${v.usefulness.stores} stores with an owner-fixable failure)`);
+  console.log(
+    `Cost/time:  ${v.cost.pass ? "pass" : "FAIL"} (${v.cost.runsOverCost} runs over $${config.caps.maxCostUsd}, ${v.cost.runsOverTime} over ${config.caps.maxMs / 1000}s; ` +
+      `max $${v.cost.maxCostUsd.toFixed(3)}, ${v.cost.maxSeconds.toFixed(0)}s)`,
+  );
+  console.log(`\n${v.go ? "GO" : "NO-GO"}`);
+}

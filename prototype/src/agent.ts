@@ -1,0 +1,102 @@
+// Manual tool-use loop shared by all tasks. It is manual (not the SDK tool runner) because every turn must
+// check the step 4 caps: steps, wall-clock time and cost.
+
+import Anthropic from "@anthropic-ai/sdk";
+import { config, costUsd } from "./config.js";
+
+type Tool = Anthropic.Beta.Messages.BetaTool;
+type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
+type ToolResult = Anthropic.Beta.Messages.BetaToolResultBlockParam;
+
+export const SUBMIT_TOOL = "submit_answer";
+
+export interface LoopResult {
+  end: "submitted" | "no_answer" | "cap_steps" | "cap_time" | "cap_cost" | "refusal";
+  answer?: unknown; // input of the submit_answer call
+  steps: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  ms: number;
+  modelsServed: string[]; // differs from config.model when a fallback served a turn
+  transcript: MessageParam[];
+}
+
+export interface LoopOptions {
+  system: string;
+  prompt: string;
+  tools: Tool[]; // must include a tool named SUBMIT_TOOL
+  // Runs one tool call and returns its text result; throw to report a tool error to the model.
+  execute: (name: string, input: unknown) => Promise<string>;
+}
+
+let client: Anthropic | undefined; // created on first use so dry runs work without credentials
+
+export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
+  client ??= new Anthropic();
+  const started = Date.now();
+  const messages: MessageParam[] = [{ role: "user", content: opts.prompt }];
+  const r: LoopResult = {
+    end: "no_answer",
+    steps: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    costUsd: 0,
+    ms: 0,
+    modelsServed: [],
+    transcript: messages,
+  };
+
+  while (true) {
+    if (r.steps >= config.caps.maxSteps) return finish(r, "cap_steps", started);
+    if (Date.now() - started >= config.caps.maxMs) return finish(r, "cap_time", started);
+    if (r.costUsd >= config.caps.maxCostUsd) return finish(r, "cap_cost", started);
+
+    const response = await client.beta.messages.create(
+      {
+        model: config.model,
+        max_tokens: 16000,
+        system: opts.system,
+        tools: opts.tools,
+        messages,
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default", // a classifier decline is retried server-side on Anthropic's recommended model
+      },
+      { timeout: Math.max(1_000, config.caps.maxMs - (Date.now() - started)) },
+    );
+    r.steps++;
+    r.inputTokens += response.usage.input_tokens;
+    r.outputTokens += response.usage.output_tokens;
+    r.costUsd += costUsd(response.model, response.usage.input_tokens, response.usage.output_tokens);
+    if (!r.modelsServed.includes(response.model)) r.modelsServed.push(response.model);
+
+    if (response.stop_reason === "refusal") return finish(r, "refusal", started);
+    messages.push({ role: "assistant", content: response.content });
+    if (response.stop_reason === "pause_turn") continue;
+
+    const calls = response.content.filter((b): b is Anthropic.Beta.Messages.BetaToolUseBlock => b.type === "tool_use");
+    if (calls.length === 0 || response.stop_reason === "max_tokens") return finish(r, "no_answer", started);
+
+    const submit = calls.find((c) => c.name === SUBMIT_TOOL);
+    if (submit) {
+      r.answer = submit.input;
+      return finish(r, "submitted", started);
+    }
+
+    const results: ToolResult[] = [];
+    for (const call of calls) {
+      try {
+        results.push({ type: "tool_result", tool_use_id: call.id, content: await opts.execute(call.name, call.input) });
+      } catch (err) {
+        results.push({ type: "tool_result", tool_use_id: call.id, is_error: true, content: String(err) });
+      }
+    }
+    messages.push({ role: "user", content: results }); // all results for a turn go back in one message
+  }
+}
+
+function finish(r: LoopResult, end: LoopResult["end"], started: number): LoopResult {
+  r.end = end;
+  r.ms = Date.now() - started;
+  return r;
+}
