@@ -9,11 +9,13 @@ type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
 type ToolResult = Anthropic.Beta.Messages.BetaToolResultBlockParam;
 
 export const SUBMIT_TOOL = "submit_answer";
+const MAX_NUDGES = 1;
 
 export interface LoopResult {
   end: "submitted" | "no_answer" | "cap_steps" | "cap_time" | "cap_cost" | "refusal";
   answer?: unknown; // input of the submit_answer call
   steps: number;
+  nudges: number; // reminders to call submit_answer after the model answered in plain text
   tokens: TokenUsage;
   costUsd: number;
   ms: number;
@@ -38,6 +40,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
   const r: LoopResult = {
     end: "no_answer",
     steps: 0,
+    nudges: 0,
     tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
     costUsd: 0,
     ms: 0,
@@ -84,7 +87,15 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     if (response.stop_reason === "pause_turn") continue;
 
     const calls = response.content.filter((b): b is Anthropic.Beta.Messages.BetaToolUseBlock => b.type === "tool_use");
-    if (calls.length === 0 || response.stop_reason === "max_tokens") return finish(r, "no_answer", started);
+    if (response.stop_reason === "max_tokens") return finish(r, "no_answer", started);
+    if (calls.length === 0) {
+      // Some models answer in plain text instead of calling submit_answer. That is a format slip, not a store
+      // problem, so remind once before counting the run as unanswered.
+      if (r.nudges >= MAX_NUDGES) return finish(r, "no_answer", started);
+      r.nudges++;
+      messages.push({ role: "user", content: `Please record your answer by calling ${SUBMIT_TOOL}.` });
+      continue;
+    }
 
     const submit = calls.find((c) => c.name === SUBMIT_TOOL);
     if (submit) {

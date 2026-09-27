@@ -22,6 +22,7 @@ export interface RunRecord {
   detail: string;
   end: string;
   steps: number;
+  nudges: number;
   tokens: { input: number; cacheWrite: number; cacheRead: number; output: number };
   costUsd: number;
   ms: number;
@@ -83,6 +84,7 @@ try {
           detail: grade.detail,
           end: loop.end,
           steps: loop.steps,
+          nudges: loop.nudges,
           tokens: loop.tokens,
           costUsd: Number(loop.costUsd.toFixed(4)),
           ms: loop.ms,

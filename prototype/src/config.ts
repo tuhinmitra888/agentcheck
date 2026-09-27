@@ -38,6 +38,8 @@ export interface TokenUsage {
 }
 
 export function costUsd(model: string, t: TokenUsage): number {
-  const p = PRICES[model] ?? PRICES["claude-opus-5"]!; // unknown model: price conservatively at Opus rates
+  // Responses can name a dated snapshot (claude-haiku-4-5-20251001), so match on the model prefix.
+  const key = Object.keys(PRICES).find((k) => model === k || model.startsWith(`${k}-`));
+  const p = PRICES[key ?? "claude-opus-5"]!; // unknown model: price conservatively at Opus rates
   return ((t.input + 1.25 * t.cacheWrite + 0.1 * t.cacheRead) * p.input + t.output * p.output) / 1_000_000;
 }

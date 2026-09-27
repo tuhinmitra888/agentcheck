@@ -10,7 +10,7 @@ import type { StoreProduct } from "../src/store.js";
 import { handleFromUrl, makeCompareTask, makeFindTask } from "../src/tasks.js";
 
 const loop = (answer: unknown, end: LoopResult["end"] = "submitted"): LoopResult => ({
-  end, answer, steps: 3, tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, costUsd: 0.05, ms: 20_000, modelsServed: ["claude-opus-5"], transcript: [],
+  end, answer, steps: 3, nudges: 0, tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, costUsd: 0.05, ms: 20_000, modelsServed: ["claude-opus-5"], transcript: [],
 });
 
 const product = (handle: string, type: string, price: number, available = true): StoreProduct => ({
@@ -84,7 +84,7 @@ test("checkout grading", () => {
 });
 
 const rec = (store: string, task: "find" | "compare", batch: number, pass: boolean, label?: string): RunRecord => ({
-  store, task, batch, run: 1, pass, label, detail: "", end: "submitted", steps: 3,
+  store, task, batch, run: 1, pass, label, detail: "", end: "submitted", steps: 3, nudges: 0,
   tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, costUsd: 0.05, ms: 20_000,
   model: "claude-opus-5", modelsServed: ["claude-opus-5"], at: "",
 });
@@ -135,4 +135,11 @@ test("evaluate: a single batch is not comparable, so it can't be called unstable
   assert.equal(v.pairs[0]!.comparable, false);
   assert.equal(v.stability.unstablePairs, 0);
   assert.equal(v.stability.pass, false);
+});
+
+test("cost matches dated model snapshots to their base price", () => {
+  const t = { input: 1_000_000, cacheWrite: 0, cacheRead: 0, output: 0 };
+  assert.equal(costUsd("claude-haiku-4-5-20251001", t), 1);
+  assert.equal(costUsd("claude-sonnet-5", t), 2);
+  assert.equal(costUsd("some-unknown-model", t), 5); // unknown: Opus rate
 });
