@@ -19,8 +19,22 @@ export interface StoreProduct {
   variants: StoreVariant[];
 }
 
-export async function fetchStoreProducts(domain: string, limit = 250): Promise<StoreProduct[]> {
-  const res = await fetch(`https://${domain}/products.json?limit=${limit}`, {
+const PAGE_SIZE = 250; // Shopify's maximum per page
+const MAX_PAGES = 40; // 10,000 products
+
+// Reads every page: a store's full catalog is the answer key, and a truncated one marks correct answers wrong.
+export async function fetchStoreProducts(domain: string): Promise<StoreProduct[]> {
+  const all: StoreProduct[] = [];
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const batch = await fetchPage(domain, page);
+    all.push(...batch);
+    if (batch.length < PAGE_SIZE) return all;
+  }
+  throw new Error(`${domain} has more than ${PAGE_SIZE * MAX_PAGES} products; raise MAX_PAGES`);
+}
+
+async function fetchPage(domain: string, page: number): Promise<StoreProduct[]> {
+  const res = await fetch(`https://${domain}/products.json?limit=${PAGE_SIZE}&page=${page}`, {
     headers: { "User-Agent": config.userAgent, Accept: "application/json" },
   });
   const body = await res.text();

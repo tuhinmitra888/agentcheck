@@ -4,7 +4,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { runLoop, SUBMIT_TOOL, type LoopResult } from "./agent.js";
 import type { BuyerContext, Catalog, CatalogProduct } from "./catalog.js";
-import { handleFromUrl, type CompareTask, type FailureLabel, type FindTask } from "./tasks.js";
+import { handleFromUrl, OWNER_FIXABLE, type CompareTask, type FailureLabel, type FindTask } from "./tasks.js";
 
 export interface Grade {
   pass: boolean;
@@ -160,13 +160,13 @@ export function gradeCompare(task: CompareTask, domain: string, loop: LoopResult
   if (capped) return capped;
   const answers = (loop.answer as { products: { product_url: string | null; lowest_price: number | null; in_stock: boolean | null }[] } | undefined)?.products ?? [];
   const problems: string[] = [];
-  let label: FailureLabel | undefined;
+  const labels: FailureLabel[] = [];
   for (const truth of task.products) {
     const answer = answers.find((a) => a.product_url && sameHost(a.product_url, domain) && handleFromUrl(a.product_url) === truth.handle);
     const shown = seen.byHandle.get(truth.handle);
     if (!answer) {
       problems.push(`${truth.handle}: no answer`);
-      label ??= shown ? "navigation_confusing" : "data_missing";
+      labels.push(shown ? "navigation_confusing" : "data_missing");
       continue;
     }
     const priceOk = answer.lowest_price !== null && Math.abs(answer.lowest_price - truth.minPrice) < 0.01;
@@ -176,11 +176,12 @@ export function gradeCompare(task: CompareTask, domain: string, loop: LoopResult
     // If the catalog itself showed the wrong value, the store's data is the problem; otherwise the agent misread it.
     const catalogPrice = shown?.priceRange?.min;
     const catalogWrong = catalogPrice !== undefined && Math.abs(catalogPrice - truth.minPrice) >= 0.01;
-    label ??= catalogWrong ? "data_inconsistent" : "other";
+    labels.push(catalogWrong ? "data_inconsistent" : "other");
   }
-  return problems.length === 0
-    ? { pass: true, detail: "both products correct" }
-    : { pass: false, label: label ?? "other", detail: problems.join("; ") };
+  if (problems.length === 0) return { pass: true, detail: "both products correct" };
+  // With several problems, report the owner-fixable one: an agent slip on one product must not hide a store gap on the other.
+  const fixable = labels.find((l) => (OWNER_FIXABLE as readonly string[]).includes(l));
+  return { pass: false, label: fixable ?? labels[0] ?? "other", detail: problems.join("; ") };
 }
 
 function capLabel(loop: LoopResult): Grade | undefined {

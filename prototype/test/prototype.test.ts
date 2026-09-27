@@ -143,3 +143,33 @@ test("cost matches dated model snapshots to their base price", () => {
   assert.equal(costUsd("claude-sonnet-5", t), 2);
   assert.equal(costUsd("some-unknown-model", t), 5); // unknown: Opus rate
 });
+
+test("compare grading reports a store gap even when the agent also got the other product wrong", () => {
+  const task = makeCompareTask("Brand", [product("a-soap", "Soap", 10), product("b-soap", "Soap", 12)]);
+  const seen = new Seen("www.shop.com");
+  seen.record([catalogHit("a-soap", 10)]); // b-soap never appeared in the catalog
+  const g = gradeCompare(task, "www.shop.com", loop({
+    products: [
+      { product_url: "https://www.shop.com/products/a-soap", lowest_price: 10, in_stock: false }, // agent misread stock
+      { product_url: null, lowest_price: null, in_stock: null },
+    ],
+  }), seen);
+  assert.equal(g.label, "data_missing");
+});
+
+test("store products are read across every page of /products.json", async () => {
+  const pages = [250, 250, 17];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => {
+    const page = Number(new URL(url).searchParams.get("page"));
+    const n = pages[page - 1] ?? 0;
+    const products = Array.from({ length: n }, (_, i) => ({ handle: `p${page}-${i}`, title: "x", variants: [{ id: i, title: "d", price: "1.00", available: true }] }));
+    return new Response(JSON.stringify({ products }), { status: 200 });
+  }) as typeof fetch;
+  try {
+    const { fetchStoreProducts } = await import("../src/store.js");
+    assert.equal((await fetchStoreProducts("www.shop.com")).length, 517);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
