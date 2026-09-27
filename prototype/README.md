@@ -18,7 +18,7 @@ export ANTHROPIC_API_KEY=...          # or `ant auth login`
 npx playwright install chromium       # only for the checkout task
 ```
 
-The model defaults to `claude-opus-5` (`STOREPROBE_MODEL` to change it). Requests opt into server-side refusal fallbacks (`fallbacks: "default"`).
+The model defaults to `claude-opus-5` (`STOREPROBE_MODEL` to change it). On Claude Opus 5 and Claude Fable 5.1, requests opt into server-side refusal fallbacks (`fallbacks: "default"`); other models run without them.
 
 Prompt caching is on: one breakpoint after the fixed tools and system prompt, plus automatic caching of the growing conversation. Costs count cache writes at 1.25x and reads at 0.1x the input price, and each run's console line shows the share of input served from cache.
 

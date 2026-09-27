@@ -2,7 +2,7 @@
 // check the step 4 caps: steps, wall-clock time and cost.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { config, costUsd, type TokenUsage } from "./config.js";
+import { config, costUsd, FALLBACK_MODELS, type TokenUsage } from "./config.js";
 
 type Tool = Anthropic.Beta.Messages.BetaTool;
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -60,8 +60,10 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
         tools: opts.tools,
         messages,
         cache_control: { type: "ephemeral" },
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default", // a classifier decline is retried server-side on Anthropic's recommended model
+        // A classifier decline is retried server-side on Anthropic's recommended model, where the model supports it.
+        ...(FALLBACK_MODELS.has(config.model)
+          ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
+          : {}),
       },
       { timeout: Math.max(1_000, config.caps.maxMs - (Date.now() - started)) },
     );

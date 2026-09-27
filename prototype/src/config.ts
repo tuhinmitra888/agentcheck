@@ -17,8 +17,13 @@ export const config = {
     .filter(Boolean),
 };
 
+// Models documented to accept server-side refusal fallbacks (`fallbacks: "default"`). Other models don't get the
+// parameter, so a model that doesn't support it can't fail the request.
+export const FALLBACK_MODELS = new Set(["claude-opus-5", "claude-fable-5-1"]);
+
 // USD per million tokens. Used to enforce the cost cap; responses served by a fallback model are priced by that model.
 const PRICES: Record<string, { input: number; output: number }> = {
+  "claude-fable-5-1": { input: 10, output: 50 }, // its cache reads are 0.025x, so the 0.1x below overstates them (safe for the cap)
   "claude-opus-5": { input: 5, output: 25 },
   "claude-opus-4-8": { input: 5, output: 25 },
   "claude-sonnet-5": { input: 2, output: 10 },
