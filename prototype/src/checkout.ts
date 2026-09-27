@@ -6,6 +6,7 @@ import { runLoop, SUBMIT_TOOL } from "./agent.js";
 import { config } from "./config.js";
 import type { Grade } from "./discovery.js";
 import type { CheckoutTask } from "./tasks.js";
+import { unlockBrowser } from "./unlock.js";
 import type Anthropic from "@anthropic-ai/sdk";
 
 type Tool = Anthropic.Beta.Messages.BetaTool;
@@ -101,6 +102,7 @@ export async function runCheckout(task: CheckoutTask, domain: string) {
     await context.route("**/*", (route: Route) =>
       shouldBlock(route.request().url(), route.request().method()) ? route.abort("blockedbyclient") : route.continue(),
     );
+    await unlockBrowser(context, domain); // no-op unless the store is password-protected and consent-listed
     const page = await context.newPage();
     await page.goto(`https://${domain}/`, { waitUntil: "domcontentloaded" });
 

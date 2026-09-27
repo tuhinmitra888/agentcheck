@@ -2,6 +2,7 @@
 // Headless stores don't serve it (0 of 11 in the hand-check); they need another source before they can be tested.
 
 import { config } from "./config.js";
+import { isPasswordPage, unlockCookie } from "./unlock.js";
 
 export interface StoreVariant {
   id: number;
@@ -34,9 +35,12 @@ export async function fetchStoreProducts(domain: string): Promise<StoreProduct[]
 }
 
 async function fetchPage(domain: string, page: number): Promise<StoreProduct[]> {
-  const res = await fetch(`https://${domain}/products.json?limit=${PAGE_SIZE}&page=${page}`, {
-    headers: { "User-Agent": config.userAgent, Accept: "application/json" },
-  });
+  const url = `https://${domain}/products.json?limit=${PAGE_SIZE}&page=${page}`;
+  let res = await get(url);
+  if (isPasswordPage(res)) {
+    res = await get(url, await unlockCookie(domain));
+    if (isPasswordPage(res)) throw new Error(`${domain} stayed locked after entering the password`);
+  }
   const body = await res.text();
   let data: { products?: unknown[] };
   try {
@@ -80,3 +84,16 @@ export const inStock = (p: StoreProduct) => p.variants.some((v) => v.available);
 const NOT_GOODS = /gift ?card|e-?gift|membership|subscription|donation|sample|warranty|insurance|shipping protection/i;
 export const isShoppable = (p: StoreProduct) =>
   !NOT_GOODS.test(`${p.title} ${p.productType}`) && minPrice(p) > 0;
+
+// Follows redirects by hand so a redirect to the password page can be recognised instead of silently followed.
+async function get(url: string, cookie?: string): Promise<Response> {
+  const headers: Record<string, string> = { "User-Agent": config.userAgent, Accept: "application/json" };
+  if (cookie) headers.Cookie = cookie;
+  for (let hops = 0; hops < 5; hops++) {
+    const res = await fetch(url, { headers, redirect: "manual" });
+    const location = res.headers.get("location");
+    if (res.status < 300 || res.status >= 400 || !location || isPasswordPage(res)) return res;
+    url = new URL(location, url).toString();
+  }
+  throw new Error(`too many redirects fetching ${url}`);
+}

@@ -10,6 +10,8 @@ export const config = {
     maxCostUsd: 0.5, // step 4 cost cap per run
     maxMs: 180_000, // step 4 time cap per run (3 minutes)
   },
+  // Storefront password for password-protected stores (development stores). Sent only to consent-listed stores.
+  storePassword: process.env.STOREPROBE_STORE_PASSWORD,
   // Stores whose owners agreed to checkout tests. The checkout task refuses to run anywhere else.
   checkoutConsent: (process.env.STOREPROBE_CHECKOUT_STORES ?? "")
     .split(",")

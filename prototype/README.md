@@ -38,6 +38,7 @@ Each run appends a line to `results/runs.jsonl` and saves its full transcript un
 ## Guardrails
 
 - **Caps per run:** 15 model turns, $0.50 and 3 minutes (step 4 criteria). A run that hits a cap fails with `cap_exceeded`.
+- **Password-protected stores** (every Shopify development store): set `STOREPROBE_STORE_PASSWORD` and list the store in `STOREPROBE_CHECKOUT_STORES`. The harness enters the password; the agent never sees it, and it is never sent to a store that isn't on that list.
 - **Checkout needs consent.** The checkout task refuses to run unless the store is listed in `STOREPROBE_CHECKOUT_STORES` (comma-separated). Only add stores whose owners agreed.
 - **No payment, ever.** The browser aborts every request to payment hosts and every non-GET request on checkout pages. The agent has no tool for typing into forms.
 - **Catalog calls** are read-only, on Shopify's anonymous tier, and send storeprobe's agent profile.

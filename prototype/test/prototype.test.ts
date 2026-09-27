@@ -173,3 +173,49 @@ test("store products are read across every page of /products.json", async () => 
     globalThis.fetch = realFetch;
   }
 });
+
+test("password-protected stores are unlocked only when consent-listed", async () => {
+  const realFetch = globalThis.fetch;
+  const sent: string[] = [];
+  globalThis.fetch = (async (url: string, init?: RequestInit) => {
+    const u = new URL(url);
+    if (u.pathname === "/password" && init?.method === "POST") {
+      sent.push(`${u.hostname}:${String(init.body)}`);
+      return new Response(null, { status: 302, headers: { location: "/", "set-cookie": "storefront_digest=abc; path=/" } });
+    }
+    const unlocked = String((init?.headers as Record<string, string> | undefined)?.Cookie ?? "").includes("storefront_digest=abc");
+    if (!unlocked) return new Response(null, { status: 302, headers: { location: `https://${u.hostname}/password` } });
+    return new Response(JSON.stringify({ products: [{ handle: "a", title: "A", variants: [{ id: 1, title: "d", price: "5.00", available: true }] }] }));
+  }) as typeof fetch;
+  const { config } = await import("../src/config.js");
+  const saved = { password: config.storePassword, consent: config.checkoutConsent };
+  try {
+    const { fetchStoreProducts } = await import("../src/store.js");
+    config.storePassword = "s3cret";
+    config.checkoutConsent = ["dev.myshopify.com"];
+    assert.equal((await fetchStoreProducts("dev.myshopify.com")).length, 1);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0]!, /^dev\.myshopify\.com:.*password=s3cret/);
+    await assert.rejects(fetchStoreProducts("stranger.myshopify.com"), /password-protected/);
+    assert.equal(sent.length, 1); // never sent to a store that isn't consent-listed
+  } finally {
+    globalThis.fetch = realFetch;
+    config.storePassword = saved.password;
+    config.checkoutConsent = saved.consent;
+  }
+});
+
+test("ordinary redirects are still followed when reading products", async () => {
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (url: string) => {
+    const u = new URL(url);
+    if (u.hostname === "shop.com") return new Response(null, { status: 301, headers: { location: `https://www.shop.com${u.pathname}${u.search}` } });
+    return new Response(JSON.stringify({ products: [{ handle: "a", title: "A", variants: [{ id: 1, title: "d", price: "5.00", available: true }] }] }));
+  }) as typeof fetch;
+  try {
+    const { fetchStoreProducts } = await import("../src/store.js");
+    assert.equal((await fetchStoreProducts("shop.com")).length, 1);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
