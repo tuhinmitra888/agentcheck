@@ -25,7 +25,14 @@ const PRICES: Record<string, { input: number; output: number }> = {
   "claude-haiku-4-5": { input: 1, output: 5 },
 };
 
-export function costUsd(model: string, inputTokens: number, outputTokens: number): number {
+export interface TokenUsage {
+  input: number; // uncached input only
+  cacheWrite: number; // 5-minute cache writes, billed at 1.25x input
+  cacheRead: number; // cache hits, billed at 0.1x input
+  output: number;
+}
+
+export function costUsd(model: string, t: TokenUsage): number {
   const p = PRICES[model] ?? PRICES["claude-opus-5"]!; // unknown model: price conservatively at Opus rates
-  return (inputTokens * p.input + outputTokens * p.output) / 1_000_000;
+  return ((t.input + 1.25 * t.cacheWrite + 0.1 * t.cacheRead) * p.input + t.output * p.output) / 1_000_000;
 }

@@ -22,6 +22,7 @@ export interface RunRecord {
   detail: string;
   end: string;
   steps: number;
+  tokens: { input: number; cacheWrite: number; cacheRead: number; output: number };
   costUsd: number;
   ms: number;
   model: string;
@@ -82,6 +83,7 @@ try {
           detail: grade.detail,
           end: loop.end,
           steps: loop.steps,
+          tokens: loop.tokens,
           costUsd: Number(loop.costUsd.toFixed(4)),
           ms: loop.ms,
           model: config.model,
@@ -95,11 +97,17 @@ try {
         );
         console.log(
           `${domain} ${task.kind} b${batch} r${run}: ${grade.pass ? "PASS" : `FAIL (${grade.label})`} ` +
-            `${loop.steps} steps $${record.costUsd} ${(loop.ms / 1000).toFixed(1)}s - ${grade.detail}`,
+            `${loop.steps} steps $${record.costUsd} ${(loop.ms / 1000).toFixed(1)}s cache ${cacheShare(loop.tokens)}% - ${grade.detail}`,
         );
       }
     }
   }
 } finally {
   await catalog.close();
+}
+
+// Share of input tokens served from cache; near 0 after the first turn means caching isn't working.
+function cacheShare(t: RunRecord["tokens"]): number {
+  const total = t.input + t.cacheWrite + t.cacheRead;
+  return total ? Math.round((100 * t.cacheRead) / total) : 0;
 }

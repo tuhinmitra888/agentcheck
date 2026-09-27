@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { LoopResult } from "../src/agent.js";
 import { gradeCheckout, isCheckoutUrl, shouldBlock } from "../src/checkout.js";
+import { costUsd } from "../src/config.js";
 import { gradeCompare, gradeFind, sameHost, Seen } from "../src/discovery.js";
 import { evaluate } from "../src/evaluate.js";
 import type { RunRecord } from "../src/run.js";
@@ -9,7 +10,7 @@ import type { StoreProduct } from "../src/store.js";
 import { handleFromUrl, makeCompareTask, makeFindTask } from "../src/tasks.js";
 
 const loop = (answer: unknown, end: LoopResult["end"] = "submitted"): LoopResult => ({
-  end, answer, steps: 3, inputTokens: 0, outputTokens: 0, costUsd: 0.05, ms: 20_000, modelsServed: ["claude-opus-5"], transcript: [],
+  end, answer, steps: 3, tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, costUsd: 0.05, ms: 20_000, modelsServed: ["claude-opus-5"], transcript: [],
 });
 
 const product = (handle: string, type: string, price: number, available = true): StoreProduct => ({
@@ -83,7 +84,8 @@ test("checkout grading", () => {
 });
 
 const rec = (store: string, task: "find" | "compare", batch: number, pass: boolean, label?: string): RunRecord => ({
-  store, task, batch, run: 1, pass, label, detail: "", end: "submitted", steps: 3, costUsd: 0.05, ms: 20_000,
+  store, task, batch, run: 1, pass, label, detail: "", end: "submitted", steps: 3,
+  tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 }, costUsd: 0.05, ms: 20_000,
   model: "claude-opus-5", modelsServed: ["claude-opus-5"], at: "",
 });
 
@@ -118,4 +120,12 @@ test("evaluate: one run over the cost cap fails cost", () => {
   const records = [...batch("s1", "find", 1, 7), ...batch("s1", "find", 2, 7)];
   records[0] = { ...records[0]!, costUsd: 0.62 };
   assert.equal(evaluate(records).cost.pass, false);
+});
+
+test("cost counts cache writes at 1.25x and cache reads at 0.1x of the input price", () => {
+  // Opus 5: $5 in / $25 out per million tokens
+  assert.equal(costUsd("claude-opus-5", { input: 1_000_000, cacheWrite: 0, cacheRead: 0, output: 0 }), 5);
+  assert.equal(costUsd("claude-opus-5", { input: 0, cacheWrite: 1_000_000, cacheRead: 0, output: 0 }), 6.25);
+  assert.equal(costUsd("claude-opus-5", { input: 0, cacheWrite: 0, cacheRead: 1_000_000, output: 0 }), 0.5);
+  assert.equal(costUsd("claude-opus-5", { input: 0, cacheWrite: 0, cacheRead: 0, output: 1_000_000 }), 25);
 });

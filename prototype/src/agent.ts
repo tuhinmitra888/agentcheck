@@ -2,7 +2,7 @@
 // check the step 4 caps: steps, wall-clock time and cost.
 
 import Anthropic from "@anthropic-ai/sdk";
-import { config, costUsd } from "./config.js";
+import { config, costUsd, type TokenUsage } from "./config.js";
 
 type Tool = Anthropic.Beta.Messages.BetaTool;
 type MessageParam = Anthropic.Beta.Messages.BetaMessageParam;
@@ -14,8 +14,7 @@ export interface LoopResult {
   end: "submitted" | "no_answer" | "cap_steps" | "cap_time" | "cap_cost" | "refusal";
   answer?: unknown; // input of the submit_answer call
   steps: number;
-  inputTokens: number;
-  outputTokens: number;
+  tokens: TokenUsage;
   costUsd: number;
   ms: number;
   modelsServed: string[]; // differs from config.model when a fallback served a turn
@@ -39,8 +38,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
   const r: LoopResult = {
     end: "no_answer",
     steps: 0,
-    inputTokens: 0,
-    outputTokens: 0,
+    tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
     costUsd: 0,
     ms: 0,
     modelsServed: [],
@@ -56,18 +54,27 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
       {
         model: config.model,
         max_tokens: 16000,
-        system: opts.system,
+        // Caching: an explicit breakpoint after the fixed tools + system prompt (identical across runs of a task),
+        // plus automatic caching, which moves a breakpoint to the end of the growing conversation each turn.
+        system: [{ type: "text", text: opts.system, cache_control: { type: "ephemeral" } }],
         tools: opts.tools,
         messages,
+        cache_control: { type: "ephemeral" },
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default", // a classifier decline is retried server-side on Anthropic's recommended model
       },
       { timeout: Math.max(1_000, config.caps.maxMs - (Date.now() - started)) },
     );
     r.steps++;
-    r.inputTokens += response.usage.input_tokens;
-    r.outputTokens += response.usage.output_tokens;
-    r.costUsd += costUsd(response.model, response.usage.input_tokens, response.usage.output_tokens);
+    const u = response.usage;
+    const turn: TokenUsage = {
+      input: u.input_tokens,
+      cacheWrite: u.cache_creation_input_tokens ?? 0,
+      cacheRead: u.cache_read_input_tokens ?? 0,
+      output: u.output_tokens,
+    };
+    for (const k of Object.keys(turn) as (keyof TokenUsage)[]) r.tokens[k] += turn[k];
+    r.costUsd += costUsd(response.model, turn);
     if (!r.modelsServed.includes(response.model)) r.modelsServed.push(response.model);
 
     if (response.stop_reason === "refusal") return finish(r, "refusal", started);
