@@ -230,3 +230,12 @@ test("checkout task skips products passed in skip (e.g. subscription products)",
   assert.equal(makeCheckoutTask("Brand", "shop.com", products).handle, "a-wax");
   assert.equal(makeCheckoutTask("Brand", "shop.com", products, new Set(["a-wax"])).handle, "b-board");
 });
+
+test("checkout task asks for a non-default variant when one is available", async () => {
+  const { makeCheckoutTask } = await import("../src/tasks.js");
+  const p: StoreProduct = {
+    ...product("board", "Board", 10),
+    variants: [{ id: 1, title: "Ice", price: 10, available: true }, { id: 2, title: "Dawn", price: 10, available: true }],
+  };
+  assert.equal(makeCheckoutTask("Brand", "shop.com", [p]).variantTitle, "Dawn");
+});

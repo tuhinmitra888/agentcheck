@@ -89,7 +89,10 @@ export function makeCompareTask(brand: string, products: StoreProduct[]): Compar
 export function makeCheckoutTask(brand: string, domain: string, products: StoreProduct[], skip = new Set<string>()): CheckoutTask {
   const shoppable = products.filter((p) => isShoppable(p) && inStock(p) && !skip.has(p.handle)).sort(byHandle);
   const product = shoppable.find((p) => p.variants.length > 1) ?? shoppable[0];
-  const variant = product?.variants.find((v) => v.available);
+  // Prefer an available variant other than the first: the first is usually preselected, so asking for it would
+  // pass without the agent ever using the variant picker.
+  const available = product?.variants.filter((v) => v.available) ?? [];
+  const variant = available.find((v) => v !== product?.variants[0]) ?? available[0];
   if (!product || !variant) throw new Error("no in-stock variant to build a checkout task from");
   const which = product.variants.length > 1 ? ` in "${variant.title}"` : "";
   return {

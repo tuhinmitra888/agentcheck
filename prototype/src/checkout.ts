@@ -138,18 +138,31 @@ function browserExecutor(page: Page, domain: string) {
 }
 
 // Numbers the visible interactive elements so the model can refer to them.
-async function snapshot(page: Page) {
+export async function snapshot(page: Page) {
   const elements = await page.evaluate(() => {
-    const out: { ref: number; tag: string; text: string; options?: string[] }[] = [];
-    const nodes = document.querySelectorAll("a[href], button, select, input[type=submit], input[type=button], [role=button]");
+    const out: { ref: number; tag: string; text: string; options?: string[]; selected?: boolean }[] = [];
+    // Labels cover variant pickers built from visually hidden radio buttons (common in Shopify themes).
+    const nodes = document.querySelectorAll(
+      "a[href], button, select, input[type=submit], input[type=button], [role=button], [role=radio], label[for]",
+    );
+    // Numbers from an earlier snapshot of the same page would collide with the new ones.
+    document.querySelectorAll("[data-sp-ref]").forEach((el) => el.removeAttribute("data-sp-ref"));
     let ref = 0;
     for (const el of Array.from(nodes)) {
       const box = (el as HTMLElement).getBoundingClientRect();
       if (box.width === 0 || box.height === 0) continue;
-      el.setAttribute("data-sp-ref", String(ref));
       const text = ((el as HTMLElement).innerText || el.getAttribute("aria-label") || (el as HTMLInputElement).value || "").trim().slice(0, 80);
-      const options = el instanceof HTMLSelectElement ? Array.from(el.options).map((o) => o.label).slice(0, 30) : undefined;
-      out.push({ ref, tag: el.tagName.toLowerCase(), text, ...(options ? { options } : {}) });
+      let entry: (typeof out)[number];
+      if (el instanceof HTMLLabelElement) {
+        const input = document.getElementById(el.htmlFor);
+        if (!(input instanceof HTMLInputElement) || !["radio", "checkbox"].includes(input.type)) continue;
+        entry = { ref, tag: `${input.type} option`, text, selected: input.checked };
+      } else {
+        const options = el instanceof HTMLSelectElement ? Array.from(el.options).map((o) => o.label).slice(0, 30) : undefined;
+        entry = { ref, tag: el.tagName.toLowerCase(), text, ...(options ? { options } : {}) };
+      }
+      el.setAttribute("data-sp-ref", String(ref));
+      out.push(entry);
       if (++ref >= 120) break;
     }
     return out;
