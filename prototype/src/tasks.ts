@@ -86,8 +86,8 @@ export function makeCompareTask(brand: string, products: StoreProduct[]): Compar
   };
 }
 
-export function makeCheckoutTask(brand: string, domain: string, products: StoreProduct[]): CheckoutTask {
-  const shoppable = products.filter((p) => isShoppable(p) && inStock(p)).sort(byHandle);
+export function makeCheckoutTask(brand: string, domain: string, products: StoreProduct[], skip = new Set<string>()): CheckoutTask {
+  const shoppable = products.filter((p) => isShoppable(p) && inStock(p) && !skip.has(p.handle)).sort(byHandle);
   const product = shoppable.find((p) => p.variants.length > 1) ?? shoppable[0];
   const variant = product?.variants.find((v) => v.available);
   if (!product || !variant) throw new Error("no in-stock variant to build a checkout task from");

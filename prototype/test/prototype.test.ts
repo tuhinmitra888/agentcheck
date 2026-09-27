@@ -219,3 +219,14 @@ test("ordinary redirects are still followed when reading products", async () => 
     globalThis.fetch = realFetch;
   }
 });
+
+test("checkout task skips products passed in skip (e.g. subscription products)", async () => {
+  const { makeCheckoutTask } = await import("../src/tasks.js");
+  const multi = (handle: string): StoreProduct => ({
+    ...product(handle, "Board", 10),
+    variants: [{ id: 1, title: "S", price: 10, available: true }, { id: 2, title: "M", price: 10, available: true }],
+  });
+  const products = [multi("a-wax"), multi("b-board")];
+  assert.equal(makeCheckoutTask("Brand", "shop.com", products).handle, "a-wax");
+  assert.equal(makeCheckoutTask("Brand", "shop.com", products, new Set(["a-wax"])).handle, "b-board");
+});

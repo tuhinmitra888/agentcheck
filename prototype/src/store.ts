@@ -97,3 +97,14 @@ async function get(url: string, cookie?: string): Promise<Response> {
   }
   throw new Error(`too many redirects fetching ${url}`);
 }
+
+// Subscription (selling plan) products are poor checkout tests: the agent may pick the subscription and the price
+// won't match. /products.json doesn't expose selling plans, but each product's .js endpoint does.
+export async function hasSellingPlans(domain: string, handle: string): Promise<boolean> {
+  const url = `https://${domain}/products/${handle}.js`;
+  let res = await get(url);
+  if (isPasswordPage(res)) res = await get(url, await unlockCookie(domain));
+  if (!res.ok) return false;
+  const p = (await res.json()) as { selling_plan_groups?: unknown[] };
+  return (p.selling_plan_groups?.length ?? 0) > 0;
+}

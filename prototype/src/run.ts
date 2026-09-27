@@ -9,7 +9,7 @@ import { Catalog } from "./catalog.js";
 import { runCheckout } from "./checkout.js";
 import { config } from "./config.js";
 import { runCompare, runFind } from "./discovery.js";
-import { fetchStoreProducts } from "./store.js";
+import { fetchStoreProducts, hasSellingPlans } from "./store.js";
 import { makeCheckoutTask, makeCompareTask, makeFindTask, type Task, type TaskKind } from "./tasks.js";
 
 export interface RunRecord {
@@ -52,11 +52,25 @@ const kinds = values.tasks.split(",").map((t) => t.trim()) as TaskKind[];
 const context = { address_country: values.country, currency: values.currency };
 
 const products = await fetchStoreProducts(domain);
-const tasks: Task[] = kinds.map((k) =>
-  k === "find" ? makeFindTask(brand, products)
-  : k === "compare" ? makeCompareTask(brand, products)
-  : makeCheckoutTask(brand, domain, products),
-);
+const tasks: Task[] = [];
+for (const k of kinds) {
+  tasks.push(
+    k === "find" ? makeFindTask(brand, products)
+    : k === "compare" ? makeCompareTask(brand, products)
+    : await checkoutTask(),
+  );
+}
+
+// Picks the first checkout candidate that isn't sold by subscription.
+async function checkoutTask() {
+  const skip = new Set<string>();
+  for (let tries = 0; tries < 10; tries++) {
+    const task = makeCheckoutTask(brand, domain!, products, skip);
+    if (!(await hasSellingPlans(domain!, task.handle))) return task;
+    skip.add(task.handle);
+  }
+  throw new Error("no checkout candidate without subscription options in the first 10 tried");
+}
 
 if (values.dry) {
   console.log(JSON.stringify({ store: domain, brand, context, model: config.model, caps: config.caps, tasks }, null, 2));
