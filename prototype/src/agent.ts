@@ -12,10 +12,11 @@ export const SUBMIT_TOOL = "submit_answer";
 const MAX_NUDGES = 1;
 
 export interface LoopResult {
-  end: "submitted" | "no_answer" | "cap_steps" | "cap_time" | "cap_cost" | "refusal";
+  end: "submitted" | "no_answer" | "cap_steps" | "cap_time" | "cap_cost" | "refusal" | "api_error";
   answer?: unknown; // input of the submit_answer call
   steps: number;
   nudges: number; // reminders to call submit_answer after the model answered in plain text
+  error?: string; // set when the run ended on an API error
   toolErrors: number; // failed tool calls, e.g. catalog timeouts; runs with these may reflect infrastructure, not the store
   tokens: TokenUsage;
   costUsd: number;
@@ -55,7 +56,12 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     if (Date.now() - started >= config.caps.maxMs) return finish(r, "cap_time", started);
     if (r.costUsd >= config.caps.maxCostUsd) return finish(r, "cap_cost", started);
 
-    const response = await client.beta.messages.create(
+    // Each attempt is limited to the time left (at most 90 s) with one retry, so a slow API can't stretch a run
+    // far past the cap; an API failure ends the run as api_error instead of crashing the batch.
+    const left = config.caps.maxMs - (Date.now() - started);
+    let response;
+    try {
+      response = await client.beta.messages.create(
       {
         model: config.model,
         max_tokens: 16000,
@@ -70,8 +76,15 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
           ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }
           : {}),
       },
-      { timeout: Math.max(1_000, config.caps.maxMs - (Date.now() - started)) },
+      { timeout: Math.max(1_000, Math.min(90_000, left)), maxRetries: 1 },
     );
+    } catch (err) {
+      if (err instanceof Anthropic.APIError) {
+        r.error = String(err.message).slice(0, 300);
+        return finish(r, "api_error", started);
+      }
+      throw err;
+    }
     r.steps++;
     const u = response.usage;
     const turn: TokenUsage = {

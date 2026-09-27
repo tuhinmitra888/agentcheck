@@ -85,10 +85,17 @@ try {
   for (let batch = 1; batch <= Number(values.batches); batch++) {
     for (let run = 1; run <= Number(values.runs); run++) {
       for (const task of tasks) {
-        const { loop, grade } =
-          task.kind === "find" ? await runFind(task, domain, catalog, context)
-          : task.kind === "compare" ? await runCompare(task, domain, catalog, context)
-          : await runCheckout(task, domain);
+        let outcome;
+        try {
+          outcome =
+            task.kind === "find" ? await runFind(task, domain, catalog, context)
+            : task.kind === "compare" ? await runCompare(task, domain, catalog, context)
+            : await runCheckout(task, domain);
+        } catch (err) {
+          // A page-load timeout or similar must not end the whole batch; record it as infrastructure and move on.
+          outcome = { loop: failedLoop(), grade: { pass: false, label: "infra_error" as const, detail: `harness_error: ${String(err).slice(0, 200)}` } };
+        }
+        const { loop, grade } = outcome;
         const record: RunRecord = {
           store: domain,
           task: task.kind,
@@ -113,6 +120,9 @@ try {
           `${values.out}/transcripts/${domain}-${task.kind}-b${batch}-r${run}.json`,
           JSON.stringify({ task, record, transcript: loop.transcript }, null, 2),
         );
+        if (catalog.rateLimitWaits) {
+          console.log(`  (catalog rate limit: backed off ${catalog.rateLimitWaits} times so far)`);
+        }
         console.log(
           `${domain} ${task.kind} b${batch} r${run}: ${grade.pass ? "PASS" : `FAIL (${grade.label})`} ` +
             `${loop.steps} steps $${record.costUsd} ${(loop.ms / 1000).toFixed(1)}s cache ${cacheShare(loop.tokens)}%${loop.toolErrors ? ` tool errors ${loop.toolErrors}` : ""} - ${grade.detail}`,
@@ -128,4 +138,11 @@ try {
 function cacheShare(t: RunRecord["tokens"]): number {
   const total = t.input + t.cacheWrite + t.cacheRead;
   return total ? Math.round((100 * t.cacheRead) / total) : 0;
+}
+
+function failedLoop(): import("./agent.js").LoopResult {
+  return {
+    end: "api_error", steps: 0, nudges: 0, toolErrors: 0, costUsd: 0, ms: 0, modelsServed: [], transcript: [],
+    tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
+  };
 }

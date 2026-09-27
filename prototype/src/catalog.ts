@@ -9,6 +9,12 @@ import { config } from "./config.js";
 // Shopify Catalog sometimes hangs (one run lost 4.5 minutes to two searches). A normal search answers in well under
 // a second, so a stuck call fails fast and the agent can retry, instead of eating the run's time cap.
 const CALL_TIMEOUT_MS = 20_000;
+const RATE_LIMIT_RETRIES = 4;
+
+function isRateLimited(err: unknown): boolean {
+  const e = err as { code?: number; message?: string };
+  return e?.code === 429 || /rate limit/i.test(String(e?.message ?? err));
+}
 
 export interface BuyerContext {
   address_country: string;
@@ -54,7 +60,23 @@ export class Catalog {
     return product ? toProduct(product) : undefined;
   }
 
+  // Shopify's anonymous tier is rate-limited per IP (429 "Rate limit exceeded"). Back off and retry here so the agent
+  // never sees a rate-limit error: an agent that gives up on one would be graded as if the store's data were missing.
   private async call(name: string, catalog: Record<string, unknown>): Promise<Record<string, unknown>> {
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.callOnce(name, catalog);
+      } catch (err) {
+        if (!isRateLimited(err) || attempt >= RATE_LIMIT_RETRIES) throw err;
+        this.rateLimitWaits++;
+        await new Promise((r) => setTimeout(r, 2_000 * 2 ** attempt)); // 2, 4, 8, 16 s
+      }
+    }
+  }
+
+  rateLimitWaits = 0; // how often this client backed off; high numbers mean runs are too dense
+
+  private async callOnce(name: string, catalog: Record<string, unknown>): Promise<Record<string, unknown>> {
     const result = await this.client.callTool(
       { name, arguments: { meta: { "ucp-agent": { profile: config.profileUrl } }, catalog } },
       CallToolResultSchema,

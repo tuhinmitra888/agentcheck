@@ -23,6 +23,7 @@ export type FailureLabel =
   | "recommended_competitor"
   | "gave_up"
   | "cap_exceeded"
+  | "infra_error" // our side or a service outage (API, network, page load); excluded from the go/no-go criteria
   | "other";
 
 export interface FindTask {
@@ -30,6 +31,8 @@ export interface FindTask {
   prompt: string;
   acceptableHandles: string[]; // every store product that satisfies the constraints
   targetHandle: string; // the product the constraints were built from
+  // A few acceptable products the harness searches for itself before blaming the store for "data missing".
+  probes: { handle: string; title: string }[];
 }
 
 export interface CompareTask {
@@ -65,20 +68,25 @@ export function makeFindTask(brand: string, products: StoreProduct[]): FindTask 
     prompt: `I want to buy something from ${brand}'s "${target.productType}" range that costs no more than ${ceiling} and is in stock. Find one and give me its product page URL on ${brand}'s own store.`,
     acceptableHandles: acceptable.map((p) => p.handle),
     targetHandle: target.handle,
+    probes: probeSpread(target, acceptable).map((p) => ({ handle: p.handle, title: p.title })),
   };
 }
 
 export function makeCompareTask(brand: string, products: StoreProduct[]): CompareTask {
   // Two products of the store's most common type, so the comparison is one a shopper would actually make.
   const byType = new Map<string, StoreProduct[]>();
-  for (const p of products.filter((p) => isShoppable(p) && p.productType)) {
+  // In stock only: Shopify Catalog appears to leave out-of-stock products out, so comparing them tests nothing
+  // an owner can fix (Tentree's first compare task picked two out-of-stock products).
+  for (const p of products.filter((p) => isShoppable(p) && inStock(p) && p.productType)) {
     byType.set(p.productType, [...(byType.get(p.productType) ?? []), p]);
   }
   const group = [...byType.values()].filter((g) => g.length >= 2).sort((x, y) => y.length - x.length || byHandle(x[0]!, y[0]!))[0];
   if (!group) throw new Error("no two products share a product type; cannot build a compare task");
   const sorted = group.sort(byHandle);
-  const mid = Math.floor((sorted.length - 1) / 2);
-  const [a, b] = [sorted[mid]!, sorted[mid + 1]!];
+  const a = sorted[Math.floor((sorted.length - 1) / 2)]!;
+  // Colourways often share a title (Tentree's "Knowles Henley" twice); an agent can't tell those apart.
+  const b = sorted.find((p) => sorted.indexOf(p) > sorted.indexOf(a) && p.title !== a.title) ?? sorted.find((p) => p.title !== a.title);
+  if (!b) throw new Error("no two products with different titles share a product type; cannot build a compare task");
   return {
     kind: "compare",
     prompt: `Compare these two products from ${brand}: "${a.title}" and "${b.title}". For each, tell me its lowest price and whether it is in stock.`,
@@ -112,4 +120,12 @@ export function handleFromUrl(url: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+// Up to 10 acceptable products spread across the list, target first. Checking only 3 wasn't enough: Allbirds' first
+// three were all missing from the catalog while other acceptable shoes were findable.
+function probeSpread(target: StoreProduct, acceptable: StoreProduct[]): StoreProduct[] {
+  const others = acceptable.filter((p) => p !== target);
+  const n = Math.min(9, others.length);
+  return [target, ...Array.from({ length: n }, (_, i) => others[Math.floor((i * others.length) / n)]!)];
 }

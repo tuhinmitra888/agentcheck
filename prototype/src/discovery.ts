@@ -123,7 +123,9 @@ export async function runFind(task: FindTask, domain: string, catalog: Catalog, 
     tools: [searchTool, productTool, findSubmit],
     execute: catalogExecutor(catalog, context, seen),
   });
-  return { loop, grade: gradeFind(task, domain, loop, seen) };
+  const grade = gradeFind(task, domain, loop, seen);
+  // Any acceptable product counts: the catalog groups colourways, so searching one colourway can return another.
+  return { loop, grade: await confirmMissing(grade, task.probes, domain, catalog, context, new Set(task.acceptableHandles)) };
 }
 
 export async function runCompare(task: CompareTask, domain: string, catalog: Catalog, context: BuyerContext) {
@@ -134,7 +136,35 @@ export async function runCompare(task: CompareTask, domain: string, catalog: Cat
     tools: [searchTool, productTool, compareSubmit],
     execute: catalogExecutor(catalog, context, seen),
   });
-  return { loop, grade: gradeCompare(task, domain, loop, seen) };
+  const grade = gradeCompare(task, domain, loop, seen);
+  const unanswered = task.products.filter((p) => !seen.byHandle.has(p.handle));
+  return { loop, grade: await confirmMissing(grade, unanswered, domain, catalog, context) };
+}
+
+// "Data missing" means the agent never saw the product. That may be the store's catalog data, or the agent searching
+// badly (Haiku gave up on Allbirds after two searches while Opus found matches every time). Before blaming the store,
+// the harness searches each product's exact title itself; if the catalog returns it, the failure is the agent's.
+export async function confirmMissing(
+  grade: Grade,
+  products: { handle: string; title: string }[],
+  domain: string,
+  catalog: Pick<Catalog, "search">,
+  context: BuyerContext,
+  acceptable?: Set<string>, // find: any acceptable product proves findability; compare: only the product itself
+): Promise<Grade> {
+  if (grade.label !== "data_missing") return grade;
+  for (const p of products) {
+    const results = await catalog.search(p.title, context);
+    const ok = (h?: string) => !!h && (acceptable ? acceptable.has(h) : h === p.handle);
+    const hit = results
+      .flatMap((r) => r.variants)
+      .map((v) => (v.url && sameHost(v.url, domain) ? handleFromUrl(v.url) : undefined))
+      .find(ok);
+    if (hit) {
+      return { pass: false, label: "navigation_confusing", detail: `${grade.detail}; harness search found ${hit}, so the agent missed it` };
+    }
+  }
+  return { ...grade, detail: `${grade.detail}; confirmed: exact-title search doesn't return it` };
 }
 
 export function gradeFind(task: FindTask, domain: string, loop: LoopResult, seen: Seen): Grade {
@@ -186,6 +216,7 @@ export function gradeCompare(task: CompareTask, domain: string, loop: LoopResult
 
 function capLabel(loop: LoopResult): Grade | undefined {
   if (loop.end === "submitted") return undefined;
+  if (loop.end === "api_error") return { pass: false, label: "infra_error", detail: `api_error: ${loop.error ?? ""}` };
   if (loop.end.startsWith("cap_")) return { pass: false, label: "cap_exceeded", detail: loop.end };
   return { pass: false, label: loop.end === "refusal" ? "other" : "gave_up", detail: loop.end };
 }

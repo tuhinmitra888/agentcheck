@@ -11,7 +11,8 @@
     "probe": "tsx src/run.ts",
     "evaluate": "tsx src/evaluate.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "teaser": "tsx src/teaser.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.128.0",

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { LoopResult } from "../src/agent.js";
 import { gradeCheckout, isCheckoutUrl, shouldBlock } from "../src/checkout.js";
 import { costUsd } from "../src/config.js";
-import { gradeCompare, gradeFind, sameHost, Seen } from "../src/discovery.js";
+import { confirmMissing, gradeCompare, gradeFind, sameHost, Seen } from "../src/discovery.js";
 import { evaluate } from "../src/evaluate.js";
 import type { RunRecord } from "../src/run.js";
 import type { StoreProduct } from "../src/store.js";
@@ -240,4 +240,63 @@ test("checkout task asks for a non-default variant when one is available", async
     variants: [{ id: 1, title: "Ice", price: 10, available: true }, { id: 2, title: "Dawn", price: 10, available: true }],
   };
   assert.equal(makeCheckoutTask("Brand", "shop.com", [p]).variantTitle, "Dawn");
+});
+
+test("rate-limit errors are recognised for retry", async () => {
+  const mod = await import("../src/catalog.js");
+  const Catalog = mod.Catalog as unknown as { prototype: { call: Function; callOnce: Function } };
+  let calls = 0;
+  const fake = Object.create(Catalog.prototype);
+  fake.rateLimitWaits = 0;
+  fake.callOnce = async () => {
+    calls++;
+    if (calls === 1) throw Object.assign(new Error("Error POSTing to endpoint: Rate limit exceeded"), { code: 429 });
+    return { products: [] };
+  };
+  const realSetTimeout = globalThis.setTimeout;
+  globalThis.setTimeout = ((fn: () => void) => realSetTimeout(fn, 0)) as typeof setTimeout; // skip the backoff wait
+  try {
+    assert.deepEqual(await Catalog.prototype.call.call(fake, "search_catalog", {}), { products: [] });
+    assert.equal(calls, 2);
+    assert.equal(fake.rateLimitWaits, 1);
+  } finally {
+    globalThis.setTimeout = realSetTimeout;
+  }
+});
+
+test("evaluate: infrastructure failures are excluded, and pass rates keep short batches comparable", () => {
+  const records = [...batch("s1", "find", 1, 7), ...batch("s1", "find", 2, 7)];
+  // three batch-2 runs lost to an outage: 7/10 vs 4/7 passing is 70% vs 57%, not unstable
+  for (const i of [17, 18, 19]) records[i] = { ...records[i]!, pass: false, label: "infra_error" };
+  records[16] = { ...records[16]!, pass: false, label: "data_missing", toolErrors: 2 }; // catalog error: excluded too
+  const v = evaluate(records);
+  assert.equal(v.infraRuns, 4);
+  assert.equal(v.pairs[0]!.batch2.runs, 6);
+  assert.equal(v.stability.unstablePairs, 0);
+});
+
+test("data missing is confirmed by the harness's own search before the store is blamed", async () => {
+  const ctx = { address_country: "US", currency: "USD" };
+  const missing = { pass: false, label: "data_missing" as const, detail: "no acceptable product appeared" };
+  const catalogWith = (handles: string[]) => ({
+    search: async () => handles.map((h) => catalogHit(h, 10)),
+  }) as unknown as Parameters<typeof confirmMissing>[3];
+  const probes = [{ handle: "a-soap", title: "a soap" }];
+  // catalog returns the product: the agent missed it
+  assert.equal((await confirmMissing(missing, probes, "www.shop.com", catalogWith(["a-soap"]), ctx)).label, "navigation_confusing");
+  // catalog doesn't: the store's gap stands
+  const g = await confirmMissing(missing, probes, "www.shop.com", catalogWith(["other"]), ctx);
+  assert.equal(g.label, "data_missing");
+  assert.match(g.detail, /confirmed/);
+});
+
+test("compare task only picks in-stock products", () => {
+  const task = makeCompareTask("Brand", [product("a-soap", "Soap", 10, false), product("b-soap", "Soap", 12), product("c-soap", "Soap", 14), product("d-soap", "Soap", 16, false)]);
+  assert.deepEqual(task.products.map((p) => p.handle).sort(), ["b-soap", "c-soap"]);
+});
+
+test("compare task never pairs two products with the same title", () => {
+  const same = (h: string) => ({ ...product(h, "Tee", 20), title: "Knowles Henley" });
+  const task = makeCompareTask("Brand", [same("henley-a"), same("henley-b"), product("pullover", "Tee", 30)]);
+  assert.notEqual(task.products[0]!.title, task.products[1]!.title);
 });

@@ -108,6 +108,7 @@ export async function runCheckout(task: CheckoutTask, domain: string) {
 
     const loop = await runLoop({ system: SYSTEM, prompt: task.prompt, tools, execute: browserExecutor(page, domain) });
 
+    if (loop.end === "api_error") return { loop, grade: { pass: false, label: "infra_error" as const, detail: `api_error: ${loop.error ?? ""}` } };
     const cart = await readCart(context.request, domain);
     return { loop, grade: gradeCheckout(task, isCheckoutUrl(page.url()), cart, await pageLooksBlocked(page)) };
   } finally {

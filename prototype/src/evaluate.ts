@@ -22,6 +22,7 @@ export interface Verdict {
   stability: { pass: boolean; unstablePairs: number; comparablePairs: number };
   usefulness: { pass: boolean; storesWithFixableFailure: number; stores: number };
   cost: { pass: boolean; runsOverCost: number; runsOverTime: number; maxCostUsd: number; maxSeconds: number };
+  infraRuns: number; // excluded from every criterion
   go: boolean;
 }
 
@@ -32,7 +33,11 @@ const MAX_UNSTABLE_PAIRS = 1;
 // Usefulness: at least half the stores have an owner-fixable failure.
 const MIN_FIXABLE_SHARE = 0.5;
 
-export function evaluate(records: RunRecord[]): Verdict {
+// Runs spoiled by infrastructure (API or network failures, catalog errors) say nothing about the store or the agent.
+export const isInfra = (r: RunRecord) => r.label === "infra_error" || (r.toolErrors ?? 0) > 0;
+
+export function evaluate(all: RunRecord[]): Verdict {
+  const records = all.filter((r) => !isInfra(r));
   const groups = new Map<string, RunRecord[]>();
   for (const r of records) {
     const key = `${r.store}\u0000${r.task}`;
@@ -46,7 +51,6 @@ export function evaluate(records: RunRecord[]): Verdict {
     };
     const b1 = count(1);
     const b2 = count(2);
-    const size = Math.max(b1.runs, b2.runs, 1);
     const comparable = b1.runs > 0 && b2.runs > 0;
     return {
       store: rs[0]!.store,
@@ -54,7 +58,8 @@ export function evaluate(records: RunRecord[]): Verdict {
       batch1: b1,
       batch2: b2,
       comparable,
-      unstable: comparable && Math.abs(b1.pass - b2.pass) > UNSTABLE_SHARE * size,
+      // Compare pass rates, so batches that lost runs to infrastructure stay comparable (4/10 of 10 runs = 40%).
+      unstable: comparable && Math.abs(b1.pass / b1.runs - b2.pass / b2.runs) > UNSTABLE_SHARE,
     };
   });
   const unstablePairs = pairs.filter((p) => p.unstable).length;
@@ -83,7 +88,7 @@ export function evaluate(records: RunRecord[]): Verdict {
     maxCostUsd: Math.max(0, ...records.map((r) => r.costUsd)),
     maxSeconds: Math.max(0, ...records.map((r) => r.ms / 1000)),
   };
-  return { pairs, stability, usefulness, cost, go: stability.pass && usefulness.pass && cost.pass };
+  return { pairs, stability, usefulness, cost, infraRuns: all.length - records.length, go: stability.pass && usefulness.pass && cost.pass };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
@@ -106,5 +111,6 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
     `Cost/time:  ${v.cost.pass ? "pass" : "FAIL"} (${v.cost.runsOverCost} runs over $${config.caps.maxCostUsd}, ${v.cost.runsOverTime} over ${config.caps.maxMs / 1000}s; ` +
       `max $${v.cost.maxCostUsd.toFixed(3)}, ${v.cost.maxSeconds.toFixed(0)}s)`,
   );
+  console.log(`Excluded:   ${v.infraRuns} runs hit by infrastructure problems (API, network or catalog errors)`);
   console.log(`\n${v.go ? "GO" : "NO-GO"}`);
 }
