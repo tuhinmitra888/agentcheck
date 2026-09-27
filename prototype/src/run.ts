@@ -23,6 +23,7 @@ export interface RunRecord {
   end: string;
   steps: number;
   nudges: number;
+  toolErrors: number;
   tokens: { input: number; cacheWrite: number; cacheRead: number; output: number };
   costUsd: number;
   ms: number;
@@ -99,6 +100,7 @@ try {
           end: loop.end,
           steps: loop.steps,
           nudges: loop.nudges,
+          toolErrors: loop.toolErrors,
           tokens: loop.tokens,
           costUsd: Number(loop.costUsd.toFixed(4)),
           ms: loop.ms,
@@ -113,7 +115,7 @@ try {
         );
         console.log(
           `${domain} ${task.kind} b${batch} r${run}: ${grade.pass ? "PASS" : `FAIL (${grade.label})`} ` +
-            `${loop.steps} steps $${record.costUsd} ${(loop.ms / 1000).toFixed(1)}s cache ${cacheShare(loop.tokens)}% - ${grade.detail}`,
+            `${loop.steps} steps $${record.costUsd} ${(loop.ms / 1000).toFixed(1)}s cache ${cacheShare(loop.tokens)}%${loop.toolErrors ? ` tool errors ${loop.toolErrors}` : ""} - ${grade.detail}`,
         );
       }
     }

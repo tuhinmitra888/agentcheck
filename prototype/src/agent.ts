@@ -16,6 +16,7 @@ export interface LoopResult {
   answer?: unknown; // input of the submit_answer call
   steps: number;
   nudges: number; // reminders to call submit_answer after the model answered in plain text
+  toolErrors: number; // failed tool calls, e.g. catalog timeouts; runs with these may reflect infrastructure, not the store
   tokens: TokenUsage;
   costUsd: number;
   ms: number;
@@ -41,6 +42,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
     end: "no_answer",
     steps: 0,
     nudges: 0,
+    toolErrors: 0,
     tokens: { input: 0, cacheWrite: 0, cacheRead: 0, output: 0 },
     costUsd: 0,
     ms: 0,
@@ -108,6 +110,7 @@ export async function runLoop(opts: LoopOptions): Promise<LoopResult> {
       try {
         results.push({ type: "tool_result", tool_use_id: call.id, content: await opts.execute(call.name, call.input) });
       } catch (err) {
+        r.toolErrors++;
         results.push({ type: "tool_result", tool_use_id: call.id, is_error: true, content: String(err) });
       }
     }

@@ -3,7 +3,12 @@
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { config } from "./config.js";
+
+// Shopify Catalog sometimes hangs (one run lost 4.5 minutes to two searches). A normal search answers in well under
+// a second, so a stuck call fails fast and the agent can retry, instead of eating the run's time cap.
+const CALL_TIMEOUT_MS = 20_000;
 
 export interface BuyerContext {
   address_country: string;
@@ -50,10 +55,11 @@ export class Catalog {
   }
 
   private async call(name: string, catalog: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const result = await this.client.callTool({
-      name,
-      arguments: { meta: { "ucp-agent": { profile: config.profileUrl } }, catalog },
-    });
+    const result = await this.client.callTool(
+      { name, arguments: { meta: { "ucp-agent": { profile: config.profileUrl } }, catalog } },
+      CallToolResultSchema,
+      { timeout: CALL_TIMEOUT_MS },
+    );
     if (result.isError) {
       const text = (result.content as { type: string; text?: string }[] | undefined)?.find((c) => c.type === "text")?.text;
       throw new Error(`${name} failed: ${text ?? "unknown error"}`);
