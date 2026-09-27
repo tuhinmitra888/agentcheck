@@ -129,3 +129,10 @@ test("cost counts cache writes at 1.25x and cache reads at 0.1x of the input pri
   assert.equal(costUsd("claude-opus-5", { input: 0, cacheWrite: 0, cacheRead: 1_000_000, output: 0 }), 0.5);
   assert.equal(costUsd("claude-opus-5", { input: 0, cacheWrite: 0, cacheRead: 0, output: 1_000_000 }), 25);
 });
+
+test("evaluate: a single batch is not comparable, so it can't be called unstable or stable", () => {
+  const v = evaluate([rec("s1", "find", 1, true)]);
+  assert.equal(v.pairs[0]!.comparable, false);
+  assert.equal(v.stability.unstablePairs, 0);
+  assert.equal(v.stability.pass, false);
+});

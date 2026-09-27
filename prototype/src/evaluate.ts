@@ -13,12 +13,13 @@ export interface PairResult {
   task: string;
   batch1: { pass: number; runs: number };
   batch2: { pass: number; runs: number };
+  comparable: boolean; // both batches have runs; a pair with a missing batch can't be judged for stability
   unstable: boolean;
 }
 
 export interface Verdict {
   pairs: PairResult[];
-  stability: { pass: boolean; unstablePairs: number };
+  stability: { pass: boolean; unstablePairs: number; comparablePairs: number };
   usefulness: { pass: boolean; storesWithFixableFailure: number; stores: number };
   cost: { pass: boolean; runsOverCost: number; runsOverTime: number; maxCostUsd: number; maxSeconds: number };
   go: boolean;
@@ -46,12 +47,14 @@ export function evaluate(records: RunRecord[]): Verdict {
     const b1 = count(1);
     const b2 = count(2);
     const size = Math.max(b1.runs, b2.runs, 1);
+    const comparable = b1.runs > 0 && b2.runs > 0;
     return {
       store: rs[0]!.store,
       task: rs[0]!.task,
       batch1: b1,
       batch2: b2,
-      unstable: Math.abs(b1.pass - b2.pass) > UNSTABLE_SHARE * size,
+      comparable,
+      unstable: comparable && Math.abs(b1.pass - b2.pass) > UNSTABLE_SHARE * size,
     };
   });
   const unstablePairs = pairs.filter((p) => p.unstable).length;
@@ -65,7 +68,9 @@ export function evaluate(records: RunRecord[]): Verdict {
   const runsOverCost = records.filter((r) => r.costUsd >= config.caps.maxCostUsd || r.end === "cap_cost").length;
   const runsOverTime = records.filter((r) => r.ms >= config.caps.maxMs || r.end === "cap_time").length;
 
-  const stability = { pass: unstablePairs <= MAX_UNSTABLE_PAIRS, unstablePairs };
+  const comparablePairs = pairs.filter((p) => p.comparable).length;
+  // Stability can only pass when there are two batches to compare.
+  const stability = { pass: comparablePairs > 0 && unstablePairs <= MAX_UNSTABLE_PAIRS, unstablePairs, comparablePairs };
   const usefulness = {
     pass: stores.length > 0 && storesWithFixableFailure >= Math.ceil(MIN_FIXABLE_SHARE * stores.length),
     storesWithFixableFailure,
@@ -90,10 +95,12 @@ if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const v = evaluate(records);
   for (const p of v.pairs) {
     console.log(
-      `${p.store} ${p.task}: batch 1 ${p.batch1.pass}/${p.batch1.runs}, batch 2 ${p.batch2.pass}/${p.batch2.runs}${p.unstable ? "  UNSTABLE" : ""}`,
+      `${p.store} ${p.task}: batch 1 ${p.batch1.pass}/${p.batch1.runs}, batch 2 ${p.batch2.pass}/${p.batch2.runs}${!p.comparable ? "  (needs two batches)" : p.unstable ? "  UNSTABLE" : ""}`,
     );
   }
-  console.log(`\nStability:  ${v.stability.pass ? "pass" : "FAIL"} (${v.stability.unstablePairs} unstable pairs, max ${MAX_UNSTABLE_PAIRS})`);
+  console.log(
+    `\nStability:  ${v.stability.pass ? "pass" : "FAIL"} (${v.stability.unstablePairs} unstable of ${v.stability.comparablePairs} comparable pairs, max ${MAX_UNSTABLE_PAIRS})`,
+  );
   console.log(`Usefulness: ${v.usefulness.pass ? "pass" : "FAIL"} (${v.usefulness.storesWithFixableFailure}/${v.usefulness.stores} stores with an owner-fixable failure)`);
   console.log(
     `Cost/time:  ${v.cost.pass ? "pass" : "FAIL"} (${v.cost.runsOverCost} runs over $${config.caps.maxCostUsd}, ${v.cost.runsOverTime} over ${config.caps.maxMs / 1000}s; ` +
