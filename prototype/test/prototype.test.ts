@@ -181,9 +181,9 @@ test("password-protected stores are unlocked only when consent-listed", async ()
     const u = new URL(url);
     if (u.pathname === "/password" && init?.method === "POST") {
       sent.push(`${u.hostname}:${String(init.body)}`);
-      return new Response(null, { status: 302, headers: { location: "/", "set-cookie": "storefront_digest=abc; path=/" } });
+      return new Response(null, { status: 302, headers: { location: "/", "set-cookie": "_shopify_essential=abc; path=/; HttpOnly" } });
     }
-    const unlocked = String((init?.headers as Record<string, string> | undefined)?.Cookie ?? "").includes("storefront_digest=abc");
+    const unlocked = String((init?.headers as Record<string, string> | undefined)?.Cookie ?? "").includes("_shopify_essential=abc");
     if (!unlocked) return new Response(null, { status: 302, headers: { location: `https://${u.hostname}/password` } });
     return new Response(JSON.stringify({ products: [{ handle: "a", title: "A", variants: [{ id: 1, title: "d", price: "5.00", available: true }] }] }));
   }) as typeof fetch;

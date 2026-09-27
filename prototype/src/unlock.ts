@@ -5,7 +5,7 @@
 import type { BrowserContext } from "playwright";
 import { config } from "./config.js";
 
-const PASSWORD_FORM = (password: string) => ({ form_type: "storefront_password", utf8: "✓", password });
+const PASSWORD_FORM = (password: string) => ({ password });
 
 export function passwordFor(domain: string): string | undefined {
   return config.storePassword && config.checkoutConsent.includes(domain.toLowerCase()) ? config.storePassword : undefined;
@@ -34,11 +34,16 @@ export async function unlockCookie(domain: string): Promise<string> {
     headers: { "User-Agent": config.userAgent, "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams(PASSWORD_FORM(password)).toString(),
   });
+  // Success redirects away from /password and sets the session cookie (currently _shopify_essential). Judge by the
+  // redirect rather than a cookie name, which Shopify has changed before (it used to be storefront_digest).
+  const location = res.headers.get("location") ?? "";
   const cookie = res.headers
     .getSetCookie()
     .map((c) => c.split(";")[0]!)
     .join("; ");
-  if (!/storefront_digest=/.test(cookie)) throw new Error(`could not unlock ${domain}: wrong STOREPROBE_STORE_PASSWORD?`);
+  if (res.status < 300 || res.status >= 400 || /\/password\b/.test(location) || !cookie) {
+    throw new Error(`could not unlock ${domain}: wrong STOREPROBE_STORE_PASSWORD?`);
+  }
   cookies.set(domain, cookie);
   return cookie;
 }
